@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "replica-inpp-mx"
+version = "1.0.0"
+description = "Replicación del INPP general de México a partir de series y canastas publicadas por el INEGI"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "elias" },
+]
+
+dependencies = [
+    "pandas>=2.3.3",
+    "numpy>=2.2.6",
+    "requests>=2.32",
+    "python-dateutil>=2.9.0",
+    "plotnine>=0.15.3",
+    "mizani>=0.14",
+    "pyarrow>=23.0.1",
+    "ipython>=8.38.0",
+    "jupyter",
+    "ipykernel>=7.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-mock>=3.14",
+    "ruff>=0.15",
+    "mypy>=1.20",
+    "pandas-stubs>=2.3",
+    "types-requests>=2.32",
+]
+ponderadores = [
+    "openpyxl>=3.1",
+]
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "requires_data: tests que necesitan archivos reales de data/inputs/ (excluidos en CI)",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["*.ipynb"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+strict = false
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP"]
+ignore = [
+    "E501",  # líneas largas en docstrings con tablas markdown — no partibles
+    "N818",  # excepciones con prefijo español (ErrorX) en lugar de sufijo (XError)
+]
