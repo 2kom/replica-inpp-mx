@@ -21,9 +21,49 @@ from replica_inpp.infraestructura.inegi.fuente_validacion_api import (
 )
 
 _TIPO = "PRODUCCION TOTAL"
-# Cantidad real de indicadores del tipo — no hardcodear un número aparte, evita que
-# el test quede desincronizado si el dict crece (ver docs/requerimientos/indicadores_bie_inpp.md).
-_N_INDICADORES = len(_INDICADORES[_TIPO])
+
+# Catálogo transcrito a mano desde docs/requerimientos/indicadores_bie_inpp.md (Ruta B),
+# independiente del dict productor `_INDICADORES` — si alguien borra o renombra una
+# entrada ahí por accidente, TestCatalogo lo detecta contra esta fuente aparte. Usar
+# `len(_INDICADORES[_TIPO])` como "cantidad esperada" no serviría: productor y esperado
+# encogerían juntos.
+_CATALOGO_ESPERADO: dict[str, str] = {
+    "INPP sin Petróleo y con Servicios": "910491",
+    "INPP con Petróleo y con Servicios": "1700002",
+    "Índice General Excluyendo Petróleo": "910493",
+    "INPP Mercancías y Servicios Finales": "1700001",
+    "INPP Mercancías y Servicios Intermedios": "1750002",
+    "Demanda interna": "1380015",
+    "Consumo": "1380016",
+    "Formación de capital": "1380017",
+    "Exportaciones": "1380018",
+    "Actividades primarias": "1700003",
+    "11 Agricultura, cría y explotación de animales, aprovechamiento forestal, "
+    "pesca y caza": "1700004",
+    "Actividades secundarias sin petróleo": "1700160",
+    "Actividades secundarias con petróleo": "1700161",
+    "21 Minería sin petróleo": "1700162",
+    "21 Minería con Petróleo": "1700163",
+    "22 Generación, transmisión y distribución de energía eléctrica, "
+    "suministro de agua y de gas por ductos al consumidor final": "1700211",
+    "23 Construcción": "1700226",
+    "31-33 Industrias manufactureras": "1700244",
+    "Actividades terciarias": "1701070",
+    "48-49 Transportes, correos y almacenamiento": "1701071",
+    "51 Información en medios masivos": "1701146",
+    "53 Servicios inmobiliarios y de alquiler de bienes muebles e intangibles": "1701192",
+    "54 Servicios profesionales, científicos y técnicos": "1701215",
+    "56 Servicios de apoyo a los negocios y manejo de desechos y servicios "
+    "de remediación": "1701264",
+    "61 Servicios educativos": "1701306",
+    "62 Servicios de salud y de asistencia social": "1701329",
+    "71 Servicios de esparcimiento culturales y deportivos, y otros "
+    "servicios recreativos": "1701362",
+    "72 Servicios de alojamiento temporal y de preparación de alimentos y bebidas": "1701381",
+    "81 Otros servicios excepto actividades gubernamentales": "1701404",
+}
+
+_N_INDICADORES = len(_CATALOGO_ESPERADO)
 
 _PM1 = PeriodoMensual(2026, 3)
 _PM2 = PeriodoMensual(2026, 2)
@@ -64,6 +104,11 @@ def _mock_resp(status_code: int, json_data) -> MagicMock:
     resp.json.return_value = json_data
     resp.raise_for_status.return_value = None
     return resp
+
+
+class TestCatalogo:
+    def test_indicadores_coincide_exactamente_con_el_catalogo_esperado(self):
+        assert _INDICADORES[_TIPO] == _CATALOGO_ESPERADO
 
 
 class TestInicializacion:
@@ -333,6 +378,21 @@ class TestRespuestaInvalida:
         with pytest.raises(RespuestaInvalida):
             fuente.obtener_indices([_PM1])
 
+    @pytest.mark.parametrize(
+        "time_period", ["2026/00", "2026/13", "0000/01"], ids=["mes_cero", "mes_13", "año_cero"]
+    )
+    def test_time_period_fuera_de_rango_lanza_respuesta_invalida(self, mocker, time_period):
+        # PeriodoMensual válida año/mes en __post_init__ y lanza InvarianteViolado —
+        # esa excepción de dominio no debe escapar tal cual, tiene que traducirse.
+        respuesta = {
+            "Series": [{"OBSERVATIONS": [{"TIME_PERIOD": time_period, "OBS_VALUE": "100"}]}]
+        }
+        mocker.patch("requests.get", return_value=_mock_resp(200, respuesta))
+
+        fuente = FuenteValidacionApi(token="token", tipo=_TIPO)
+        with pytest.raises(RespuestaInvalida, match="fuera de rango"):
+            fuente.obtener_indices([_PM1])
+
     def test_obs_value_ausente_lanza_respuesta_invalida(self, mocker):
         respuesta = {"Series": [{"OBSERVATIONS": [{"TIME_PERIOD": "2026/03"}]}]}
         mocker.patch("requests.get", return_value=_mock_resp(200, respuesta))
@@ -358,6 +418,17 @@ class TestRespuestaInvalida:
 
         fuente = FuenteValidacionApi(token="token", tipo=_TIPO)
         with pytest.raises(RespuestaInvalida, match="finito"):
+            fuente.obtener_indices([_PM1])
+
+    @pytest.mark.parametrize("valor", [True, False], ids=["true", "false"])
+    def test_obs_value_booleano_lanza_respuesta_invalida(self, mocker, valor):
+        # bool es subclase de int en Python — float(True) == 1.0 pasa isfinite()
+        # sin rechazo explícito, así que necesita su propia guardia y su propio test.
+        respuesta = {"Series": [{"OBSERVATIONS": [{"TIME_PERIOD": "2026/03", "OBS_VALUE": valor}]}]}
+        mocker.patch("requests.get", return_value=_mock_resp(200, respuesta))
+
+        fuente = FuenteValidacionApi(token="token", tipo=_TIPO)
+        with pytest.raises(RespuestaInvalida, match="booleano"):
             fuente.obtener_indices([_PM1])
 
 

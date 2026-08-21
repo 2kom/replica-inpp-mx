@@ -204,34 +204,80 @@ class FuenteValidacionApi:
 
         try:
             data = resp.json()
-            series = data["Series"]
-            if not series:
-                raise RespuestaInvalida("La API devolvió 'Series' vacío.")
-            observations = series[0]["OBSERVATIONS"]
-            if not observations:
-                raise RespuestaInvalida(
-                    f"La API devolvió 'OBSERVATIONS' vacío para el indicador {indicador!r}."
-                )
-        except (KeyError, IndexError, ValueError) as exc:
-            raise RespuestaInvalida(f"Respuesta del INEGI con formato inesperado: {exc}") from exc
+        except ValueError as exc:
+            raise RespuestaInvalida(f"Respuesta del INEGI no es JSON válido: {exc}") from exc
+        if not isinstance(data, dict):
+            raise RespuestaInvalida(
+                f"La API devolvió un JSON con forma inesperada para el indicador "
+                f"{indicador!r} (esperaba un objeto, llegó {type(data).__name__})."
+            )
+
+        series = data.get("Series")
+        if not series:
+            raise RespuestaInvalida("La API devolvió 'Series' vacío o ausente.")
+        if not isinstance(series, list) or not isinstance(series[0], dict):
+            raise RespuestaInvalida(
+                f"'Series' del indicador {indicador!r} tiene forma inesperada: {series!r}"
+            )
+        observations = series[0].get("OBSERVATIONS")
+        if not observations:
+            raise RespuestaInvalida(
+                f"La API devolvió 'OBSERVATIONS' vacío o ausente para el indicador {indicador!r}."
+            )
+        if not isinstance(observations, list):
+            raise RespuestaInvalida(
+                f"'OBSERVATIONS' del indicador {indicador!r} esperaba una lista, "
+                f"llegó {type(observations).__name__}."
+            )
 
         resultado: dict[PeriodoMensual, float | None] = {}
         for obs in observations:
-            try:
-                partes = obs["TIME_PERIOD"].split("/")
-                if len(partes) != 2:
-                    raise RespuestaInvalida(
-                        f"Indicador {indicador!r} esperaba periodo mensual "
-                        f"('AAAA/MM'), pero TIME_PERIOD={obs['TIME_PERIOD']!r} "
-                        f"tiene {len(partes)} partes."
-                    )
-                periodo = PeriodoMensual(int(partes[0]), int(partes[1]))
-                raw = obs["OBS_VALUE"]
-                valor = None if raw is None else float(raw)
-                resultado[periodo] = valor
-            except (KeyError, IndexError, ValueError, TypeError) as exc:
+            if not isinstance(obs, dict):
+                raise RespuestaInvalida(f"Observación con formato inesperado: {obs!r}")
+            time_period = obs.get("TIME_PERIOD")
+            if not isinstance(time_period, str):
                 raise RespuestaInvalida(
-                    f"Observación con formato inesperado: {obs!r} — {exc}"
+                    f"Indicador {indicador!r}: TIME_PERIOD esperaba texto, llegó "
+                    f"{type(time_period).__name__} ({time_period!r})."
+                )
+            partes = time_period.split("/")
+            if len(partes) != 2:
+                raise RespuestaInvalida(
+                    f"Indicador {indicador!r} esperaba periodo mensual ('AAAA/MM'), "
+                    f"pero TIME_PERIOD={time_period!r} tiene {len(partes)} partes."
+                )
+            try:
+                periodo = PeriodoMensual(int(partes[0]), int(partes[1]))
+            except ValueError as exc:
+                raise RespuestaInvalida(
+                    f"TIME_PERIOD={time_period!r} no tiene año/mes numéricos: {exc}"
                 ) from exc
+            except InvarianteViolado as exc:
+                raise RespuestaInvalida(
+                    f"TIME_PERIOD={time_period!r} tiene año/mes fuera de rango: {exc}"
+                ) from exc
+
+            if "OBS_VALUE" not in obs:
+                raise RespuestaInvalida(f"Observación sin 'OBS_VALUE': {obs!r}")
+            raw = obs["OBS_VALUE"]
+            valor: float | None
+            if raw is None:
+                valor = None
+            else:
+                if isinstance(raw, bool):
+                    raise RespuestaInvalida(
+                        f"Indicador {indicador!r}, periodo {periodo}: "
+                        f"OBS_VALUE={raw!r} es booleano, no un valor numérico."
+                    )
+                try:
+                    valor = float(raw)
+                except (TypeError, ValueError) as exc:
+                    raise RespuestaInvalida(f"OBS_VALUE={raw!r} no es numérico: {exc}") from exc
+                if not math.isfinite(valor):
+                    raise RespuestaInvalida(
+                        f"Indicador {indicador!r}, periodo {periodo}: "
+                        f"OBS_VALUE={raw!r} no es un valor finito."
+                    )
+            resultado[periodo] = valor
 
         return resultado
