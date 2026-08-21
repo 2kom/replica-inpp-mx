@@ -46,6 +46,7 @@ where = ["src"]
 testpaths = ["tests"]
 markers = [
     "requires_data: tests que necesitan archivos reales de data/inputs/ (excluidos en CI)",
+    "requires_api: tests que llaman a la API del BIE; requieren INEGI_TOKEN (excluidos en CI)",
 ]
 
 [tool.ruff]
