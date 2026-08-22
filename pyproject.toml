@@ -44,6 +44,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["tools"]
 markers = [
     "requires_data: tests que necesitan archivos reales de data/inputs/ (destinado a excluirse en CI)",
     "requires_api: tests que llaman a la API del BIE; requieren INEGI_TOKEN (destinado a excluirse en CI)",
