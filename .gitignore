@@ -217,6 +217,7 @@ tools/test
 
 # Notebook
 notebook.ipynb
+notebooks/
 
 # Data
 data/

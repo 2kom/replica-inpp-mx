@@ -132,7 +132,7 @@ LAYOUTS_XLSX: dict[VersionCanastaScian, LayoutXlsx] = {
 # Archivo de factor de encadenamiento -- solo existe para 2025, es un xlsx
 # aparte del de ponderadores (no vive dentro de LayoutXlsx porque no es una
 # hoja del mismo archivo). Posiciones confirmadas contra
-# docs/requerimientos/xlsx/2025/factor_de_encadenamiento_ti.xlsx.
+# data/tests/xlsx/2025/factor_de_encadenamiento_ti.xlsx.
 HOJA_ENCADENAMIENTO = "FACTOR DE ENCADENAMIENTO"
 COL_ENCADENAMIENTO_TOTAL = 8
 COL_ENCADENAMIENTO_PRODUCCION_NACIONAL = 10
