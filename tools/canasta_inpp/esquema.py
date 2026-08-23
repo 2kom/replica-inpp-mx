@@ -134,6 +134,9 @@ LAYOUTS_XLSX: dict[VersionCanastaScian, LayoutXlsx] = {
 # hoja del mismo archivo). Posiciones confirmadas contra
 # data/tests/xlsx/2025/factor_de_encadenamiento_ti.xlsx.
 HOJA_ENCADENAMIENTO = "FACTOR DE ENCADENAMIENTO"
+# código de genérico -- misma posición que col_g de LAYOUTS_XLSX[2025] (este
+# xlsx repite el mismo layout S/SB/R/SR/C/G/ACTIVIDAD en columnas 1-7).
+COL_ENCADENAMIENTO_GENERICO = 6
 COL_ENCADENAMIENTO_TOTAL = 8
 COL_ENCADENAMIENTO_PRODUCCION_NACIONAL = 10
 COL_ENCADENAMIENTO_EXPORTACION = 12

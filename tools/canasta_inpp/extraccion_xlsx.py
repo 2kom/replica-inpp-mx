@@ -10,6 +10,12 @@ import pandas as pd
 from openpyxl.worksheet.worksheet import Worksheet
 
 from canasta_inpp.esquema import (
+    COL_ENCADENAMIENTO_EXPORTACION,
+    COL_ENCADENAMIENTO_GENERICO,
+    COL_ENCADENAMIENTO_PRODUCCION_NACIONAL,
+    COL_ENCADENAMIENTO_TOTAL,
+    COL_ENCADENAMIENTO_USO_FINAL,
+    HOJA_ENCADENAMIENTO,
     LAYOUTS_CANASTA,
     LAYOUTS_XLSX,
     LayoutCanasta,
@@ -390,5 +396,74 @@ def extraer_canasta(ruta: Path, version: VersionCanastaScian) -> pd.DataFrame:
         duplicados = sorted(df.loc[df["codigo"].duplicated(), "codigo"].unique())
         raise ValueError(
             f"'{layout.hoja}' ({ruta.name}) trae código(s) de genérico duplicado(s): {duplicados}"
+        )
+    return df
+
+
+_COLUMNAS_ENCADENAMIENTO_FACTOR: dict[int, str] = {
+    COL_ENCADENAMIENTO_TOTAL: "encadenamiento_total",
+    COL_ENCADENAMIENTO_PRODUCCION_NACIONAL: "encadenamiento_produccion_nacional",
+    COL_ENCADENAMIENTO_EXPORTACION: "encadenamiento_exportacion",
+    COL_ENCADENAMIENTO_USO_FINAL: "encadenamiento_uso_final",
+}
+
+
+def extraer_encadenamiento(ruta: Path) -> pd.DataFrame:
+    """Lee el xlsx de factor de encadenamiento (solo 2025) -- una fila por genérico.
+
+    Más simple que `extraer_ponderadores`/`extraer_canasta`: una sola hoja,
+    sin state machine (cada fila de genérico ya trae los 4 factores
+    completos, igual que las hojas de ponderadores). Filtra filas de
+    agregado (Sector/Subsector/... sin código de genérico) con
+    `_es_codigo_generico`, mismo criterio que `extraer_ponderadores` -- este
+    xlsx repite el layout S/SB/R/SR/C/G/ACTIVIDAD de `LAYOUTS_XLSX[2025]` en
+    las columnas 1-7 (confirmado con el xlsx real), de ahí que
+    `COL_ENCADENAMIENTO_GENERICO` sea la misma posición que `col_g`.
+
+    Columnas devueltas: `codigo`, `encadenamiento_total`,
+    `encadenamiento_produccion_nacional`, `encadenamiento_exportacion`,
+    `encadenamiento_uso_final`. Los factores numéricos se guardan como texto
+    crudo del XML (`_valores_crudos`), mismo criterio de precisión exacta
+    que el peso de `extraer_ponderadores` -- son datos que después se
+    multiplican en el cálculo del índice, perder un decimal ahí sí importa.
+    `"N/A"` (genérico sin cobertura en esa columna, ej. sin producción de
+    exportación) se convierte a `NaN` real (`float("nan")`), no queda como
+    texto -- confirmado contra el xlsx real que `encadenamiento_total` y
+    `encadenamiento_produccion_nacional` nunca traen `"N/A"` (cubren el
+    universo completo de genéricos), pero `encadenamiento_exportacion` y
+    `encadenamiento_uso_final` sí (109 y 21 genéricos respectivamente en el
+    xlsx de 2025).
+
+    Lanza `ValueError` si el xlsx trae código de genérico duplicado (mismo
+    contrato que `extraer_ponderadores`/`extraer_canasta`).
+    """
+    wb = openpyxl.load_workbook(ruta, data_only=True)
+    ws: Worksheet = wb[HOJA_ENCADENAMIENTO]
+    crudos = _valores_crudos(ruta, HOJA_ENCADENAMIENTO)
+
+    filas: list[dict[str, object]] = []
+    for row in ws.iter_rows():
+        if len(row) <= COL_ENCADENAMIENTO_USO_FINAL:
+            continue
+        codigo_crudo = row[COL_ENCADENAMIENTO_GENERICO].value
+        if not _es_codigo_generico(codigo_crudo):
+            continue
+
+        fila: dict[str, object] = {"codigo": str(codigo_crudo).strip().zfill(3)}
+        for col, nombre in _COLUMNAS_ENCADENAMIENTO_FACTOR.items():
+            celda = row[col]
+            if celda.value == "N/A":
+                fila[nombre] = float("nan")
+                continue
+            valor_crudo = crudos.get(celda.coordinate)
+            fila[nombre] = valor_crudo if valor_crudo is not None else celda.value
+        filas.append(fila)
+
+    df = pd.DataFrame(filas, columns=["codigo", *_COLUMNAS_ENCADENAMIENTO_FACTOR.values()])
+    if not df["codigo"].is_unique:
+        duplicados = sorted(df.loc[df["codigo"].duplicated(), "codigo"].unique())
+        raise ValueError(
+            f"'{HOJA_ENCADENAMIENTO}' ({ruta.name}) trae código(s) de genérico "
+            f"duplicado(s): {duplicados}"
         )
     return df

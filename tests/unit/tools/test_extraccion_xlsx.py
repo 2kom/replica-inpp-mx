@@ -5,10 +5,23 @@ from pathlib import Path
 from xml.etree import ElementTree as ET
 
 import openpyxl
+import pandas as pd
 import pytest
-from canasta_inpp.esquema import LAYOUTS_CANASTA, LAYOUTS_XLSX, LayoutCanasta, VersionCanastaScian
+from canasta_inpp.esquema import (
+    COL_ENCADENAMIENTO_EXPORTACION,
+    COL_ENCADENAMIENTO_GENERICO,
+    COL_ENCADENAMIENTO_PRODUCCION_NACIONAL,
+    COL_ENCADENAMIENTO_TOTAL,
+    COL_ENCADENAMIENTO_USO_FINAL,
+    HOJA_ENCADENAMIENTO,
+    LAYOUTS_CANASTA,
+    LAYOUTS_XLSX,
+    LayoutCanasta,
+    VersionCanastaScian,
+)
 from canasta_inpp.extraccion_xlsx import (
     _COLUMNAS_CANASTA,
+    _COLUMNAS_ENCADENAMIENTO_FACTOR,
     _COLUMNAS_PONDERADORES,
     _NS_MAIN,
     _NS_PKG_REL,
@@ -20,6 +33,7 @@ from canasta_inpp.extraccion_xlsx import (
     _texto_nivel,
     _valores_crudos,
     extraer_canasta,
+    extraer_encadenamiento,
     extraer_ponderadores,
 )
 
@@ -805,3 +819,197 @@ class TestExtraerCanastaContraXlsxReales:
         assert str(df.at["001", "rama"]).startswith("1111 Cultivo de semillas")
         assert str(df.at["001", "subrama"]).startswith("11111 Cultivo de soya")
         assert df.at["001", "clase"] == "111110 Cultivo de soya"
+
+
+# =============================================================================
+# -- extraer_encadenamiento (solo 2025) ---------------------------------------
+# =============================================================================
+#
+# Más simple que extraer_ponderadores/extraer_canasta: una sola hoja, sin
+# state machine -- cada fila de genérico ya trae los 4 factores completos.
+# Mismo layout S/SB/R/SR/C/G/ACTIVIDAD que LAYOUTS_XLSX[2025] en las
+# columnas 1-7, factor en 4 columnas separadas por una columna vacía
+# (8/10/12/14).
+
+_ANCHO_ENCADENAMIENTO = COL_ENCADENAMIENTO_USO_FINAL + 1
+
+
+_ValorCeldaEncadenamiento = str | int | float | None
+
+
+def _fila_encadenamiento(
+    codigo: str,
+    actividad: str,
+    total: _ValorCeldaEncadenamiento,
+    produccion_nacional: _ValorCeldaEncadenamiento,
+    exportacion: _ValorCeldaEncadenamiento,
+    uso_final: _ValorCeldaEncadenamiento,
+) -> tuple[_ValorCeldaEncadenamiento, ...]:
+    """Fila de genérico completa del xlsx de encadenamiento (col A vacía + S/SB/R/SR/C/G/ACTIVIDAD/factores)."""
+    fila: list[_ValorCeldaEncadenamiento] = [None] * _ANCHO_ENCADENAMIENTO
+    fila[1], fila[2], fila[3], fila[4], fila[5] = 11, 111, 1111, 11111, 111110
+    fila[COL_ENCADENAMIENTO_GENERICO] = codigo
+    fila[7] = actividad
+    fila[COL_ENCADENAMIENTO_TOTAL] = total
+    fila[COL_ENCADENAMIENTO_PRODUCCION_NACIONAL] = produccion_nacional
+    fila[COL_ENCADENAMIENTO_EXPORTACION] = exportacion
+    fila[COL_ENCADENAMIENTO_USO_FINAL] = uso_final
+    return tuple(fila)
+
+
+def _fila_agregado_encadenamiento(
+    sector: int, actividad: str, total: _ValorCeldaEncadenamiento
+) -> tuple[_ValorCeldaEncadenamiento, ...]:
+    """Fila de agregado (solo Sector + ACTIVIDAD + total, sin G) -- debe quedar filtrada."""
+    fila: list[_ValorCeldaEncadenamiento] = [None] * _ANCHO_ENCADENAMIENTO
+    fila[1] = sector
+    fila[7] = actividad
+    fila[COL_ENCADENAMIENTO_TOTAL] = total
+    return tuple(fila)
+
+
+def _armar_xlsx_encadenamiento(
+    tmp_path: Path, filas: list[tuple[_ValorCeldaEncadenamiento, ...]]
+) -> Path:
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = HOJA_ENCADENAMIENTO
+    for fila in filas:
+        ws.append(fila)
+    ruta = tmp_path / "encadenamiento.xlsx"
+    wb.save(ruta)
+    return ruta
+
+
+def test_extraer_encadenamiento_forma_y_orden_de_columnas(tmp_path: Path) -> None:
+    filas = [
+        _fila_agregado_encadenamiento(11, "Agricultura", 1.5),
+        _fila_encadenamiento("1", "Soya", 1.1, 1.2, 1.3, 1.4),
+        _fila_encadenamiento("2", "Frijol", 2.1, 2.2, 2.3, 2.4),
+    ]
+    ruta = _armar_xlsx_encadenamiento(tmp_path, filas)
+
+    df = extraer_encadenamiento(ruta)
+
+    assert len(df) == 2  # la fila de agregado NO debe colarse
+    assert list(df.columns) == ["codigo", *_COLUMNAS_ENCADENAMIENTO_FACTOR.values()]
+    assert list(df["codigo"]) == ["001", "002"]
+
+
+def test_extraer_encadenamiento_convierte_na_a_nan_real(tmp_path: Path) -> None:
+    filas = [
+        _fila_encadenamiento("1", "Soya", 1.1, 1.2, "N/A", "N/A"),
+    ]
+    ruta = _armar_xlsx_encadenamiento(tmp_path, filas)
+
+    df = extraer_encadenamiento(ruta).set_index("codigo")
+
+    assert df.at["001", "encadenamiento_exportacion"] != "N/A"
+    assert df.at["001", "encadenamiento_uso_final"] != "N/A"
+    assert pd.isna(df.at["001", "encadenamiento_exportacion"])
+    assert pd.isna(df.at["001", "encadenamiento_uso_final"])
+    # las columnas SIN "N/A" no deben verse afectadas por la conversión
+    assert not pd.isna(df.at["001", "encadenamiento_total"])
+    assert not pd.isna(df.at["001", "encadenamiento_produccion_nacional"])
+
+
+def test_extraer_encadenamiento_preserva_el_texto_crudo_exacto_en_las_4_columnas(
+    tmp_path: Path,
+) -> None:
+    # mismo criterio que test_extraer_ponderadores_preserva_el_texto_crudo_exacto
+    # -- el factor se multiplica en el cálculo del índice, perder un decimal
+    # ahí sí importa. Las 4 columnas, no solo total: un valor único
+    # repetido en las 4 (o comprobado con pytest.approx) no detecta ni un
+    # swap exportación<->uso_final ni que 3 de las 4 columnas se hayan
+    # quedado con el valor ya parseado por openpyxl en vez del crudo --
+    # confirmado reproduciendo ambos mutantes antes de este fix (ver
+    # data/negociaciones/2026-08-22-extraer-encadenamiento.md).
+    filas = [_fila_encadenamiento("1", "Soya", 1.1, 1.2, 1.3, 1.4)]
+    ruta = _armar_xlsx_encadenamiento(tmp_path, filas)
+    # fila 1 = genérico "001" -> total=col I, produccion_nacional=col K,
+    # exportacion=col M, uso_final=col O (ver _fila_encadenamiento)
+    _forzar_valor_crudo(ruta, HOJA_ENCADENAMIENTO, "I1", "1.0738593778483521")
+    _forzar_valor_crudo(ruta, HOJA_ENCADENAMIENTO, "K1", "2.1487187556967042")
+    _forzar_valor_crudo(ruta, HOJA_ENCADENAMIENTO, "M1", "3.2230781335450563")
+    _forzar_valor_crudo(ruta, HOJA_ENCADENAMIENTO, "O1", "4.2974375113934084")
+
+    df = extraer_encadenamiento(ruta).set_index("codigo")
+    assert df.at["001", "encadenamiento_total"] == "1.0738593778483521"
+    assert df.at["001", "encadenamiento_produccion_nacional"] == "2.1487187556967042"
+    assert df.at["001", "encadenamiento_exportacion"] == "3.2230781335450563"
+    assert df.at["001", "encadenamiento_uso_final"] == "4.2974375113934084"
+
+
+def test_extraer_encadenamiento_rechaza_codigos_duplicados(tmp_path: Path) -> None:
+    filas = [
+        _fila_encadenamiento("1", "Soya", 1.1, 1.2, 1.3, 1.4),
+        _fila_encadenamiento("1", "Soya (dup)", 9.1, 9.2, 9.3, 9.4),
+    ]
+    ruta = _armar_xlsx_encadenamiento(tmp_path, filas)
+
+    with pytest.raises(ValueError, match="duplicado") as exc_info:
+        extraer_encadenamiento(ruta)
+    assert "['001']" in str(exc_info.value)
+
+
+# ============================================================================
+# -- extraer_encadenamiento contra el xlsx real de INEGI (solo 2025) --------
+# ============================================================================
+
+_RUTA_ENCADENAMIENTO_REAL = _REPO_ROOT / "data/tests/xlsx/2025/factor_de_encadenamiento_ti.xlsx"
+_MOTIVO_SKIP_ENCADENAMIENTO = (
+    f"falta xlsx real (data/tests gitignoreado): {_RUTA_ENCADENAMIENTO_REAL}"
+    if not _RUTA_ENCADENAMIENTO_REAL.exists()
+    else None
+)
+
+
+class TestExtraerEncadenamientoContraXlsxReal:
+    pytestmark = [
+        pytest.mark.requires_data,
+        pytest.mark.skipif(
+            _MOTIVO_SKIP_ENCADENAMIENTO is not None, reason=_MOTIVO_SKIP_ENCADENAMIENTO or ""
+        ),
+    ]
+
+    def test_cantidad_de_generico_y_codigo_unico(self) -> None:
+        df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL)
+        assert len(df) == 570  # mismo conteo que extraer_ponderadores/extraer_canasta en 2025
+        assert df["codigo"].is_unique
+
+    def test_encadenamiento_total_y_produccion_nacional_nunca_son_nan(self) -> None:
+        # confirmado contra el xlsx real: total y producción_nacional cubren
+        # el universo completo de genéricos -- a diferencia de exportación y
+        # uso_final, que sí traen "N/A" para genéricos sin esa cobertura
+        df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL)
+        assert not df["encadenamiento_total"].isna().any()
+        assert not df["encadenamiento_produccion_nacional"].isna().any()
+
+    def test_exportacion_y_uso_final_si_traen_nan(self) -> None:
+        df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL)
+        for columna in ("encadenamiento_exportacion", "encadenamiento_uso_final"):
+            assert df[columna].isna().any(), f"{columna}: se esperaba al menos un NaN"
+
+    def test_soya_trae_los_4_factores_esperados(self) -> None:
+        # Soya (001) sirve para spot-check básico, pero NO para proteger
+        # contra un swap exportación<->uso_final: las 3 columnas
+        # produccion_nacional/exportacion/uso_final valen exactamente lo
+        # mismo para este genérico en el xlsx real -- confirmado, un swap
+        # ahí es invisible. Ver test de abajo (código 065) para eso.
+        df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL).set_index("codigo")
+        assert df.at["001", "encadenamiento_total"] == "1.0738593778483521"
+        assert df.at["001", "encadenamiento_produccion_nacional"] == "1.0738593778483525"
+        assert df.at["001", "encadenamiento_exportacion"] == "1.0738593778483525"
+        assert df.at["001", "encadenamiento_uso_final"] == "1.0738593778483525"
+
+    def test_generico_con_4_valores_distintos_no_se_confunde_entre_columnas(self) -> None:
+        # código 065: las 4 columnas traen valores DISTINTOS entre sí en el
+        # xlsx real -- a diferencia de Soya (arriba), acá un swap
+        # exportación<->uso_final, o perder la precisión cruda en alguna de
+        # las 3 columnas no-total, sí cambia el resultado y el test lo nota
+        df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL).set_index("codigo")
+        assert df.at["065", "encadenamiento_total"] == "1.4165194322661865"
+        assert df.at["065", "encadenamiento_produccion_nacional"] == "1.4141735579391901"
+        assert df.at["065", "encadenamiento_exportacion"] == "1.516797214010164"
+        assert df.at["065", "encadenamiento_uso_final"] == "1.4598847030020605"
