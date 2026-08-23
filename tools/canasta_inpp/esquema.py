@@ -138,3 +138,106 @@ COL_ENCADENAMIENTO_TOTAL = 8
 COL_ENCADENAMIENTO_PRODUCCION_NACIONAL = 10
 COL_ENCADENAMIENTO_EXPORTACION = 12
 COL_ENCADENAMIENTO_USO_FINAL = 14
+
+
+@dataclass(frozen=True)
+class LayoutCanasta:
+    """Nombre de hoja y posiciones de columna del xlsx de árbol SCIAN (canasta), por versión.
+
+    Layout estructuralmente distinto de `LayoutXlsx` (ponderadores): acá cada
+    fila trae el nivel jerárquico vigente (Sector, Subsector, Rama, Subrama o
+    Clase) UNA sola columna llena a la vez -- hay que arrastrar el valor
+    vigente de cada nivel fila a fila (`extraer_canasta` hace ese state
+    machine), no leerlo directo como en ponderadores. Confirmado fila por
+    fila contra los 3 xlsx reales, no asumido por similitud entre versiones.
+
+    `col_<nivel>_nombre`: en 2012/2019 el nombre completo del nivel ya viene
+    pegado al código en la misma celda de texto (ej. `"11 Agricultura, cría
+    y explotación..."`) -- en ese caso este campo es `None` y se usa
+    `col_<nivel>` tal cual. En 2025 código y nombre vienen en columnas
+    separadas (`col_<nivel>`=código entero, `col_<nivel>_nombre`=texto) y hay
+    que unirlos (`"{codigo} {nombre}"`) para mantener el mismo formato de
+    texto combinado en las 3 versiones.
+
+    `codigo_generico_en_columna_clase`: True únicamente en 2012 -- ese xlsx
+    NO tiene columna propia para el código de genérico, reusa `col_clase`
+    (la fila de Clase trae ahí un string, la fila de Genérico un `int` puro;
+    se distinguen por tipo, no por posición). Confirmado contra las 567
+    filas de genérico de `data/tests/xlsx/2012/canasta.xlsx`: código y
+    nombre YA están en celdas separadas (código como `int`, nombre como
+    `str`) -- a diferencia de INPC, acá no hace falta parsear un string
+    combinado tipo `"01 alimentos"` para separar código de nombre.
+    """
+
+    hoja: str
+    fila_datos_inicio: int  # primera fila (1-indexed) con datos reales de la jerarquía
+
+    col_sector: int
+    col_sector_nombre: int | None
+    col_subsector: int
+    col_subsector_nombre: int | None
+    col_rama: int
+    col_rama_nombre: int | None
+    col_subrama: int
+    col_subrama_nombre: int | None
+    col_clase: int
+    col_clase_nombre: int | None
+
+    col_codigo_generico: int
+    col_nombre_generico: int
+    codigo_generico_en_columna_clase: bool
+
+
+LAYOUTS_CANASTA: dict[VersionCanastaScian, LayoutCanasta] = {
+    2012: LayoutCanasta(
+        hoja="CANASTA",
+        fila_datos_inicio=10,
+        col_sector=1,
+        col_sector_nombre=None,
+        col_subsector=2,
+        col_subsector_nombre=None,
+        col_rama=3,
+        col_rama_nombre=None,
+        col_subrama=4,
+        col_subrama_nombre=None,
+        col_clase=5,
+        col_clase_nombre=None,
+        col_codigo_generico=5,
+        col_nombre_generico=6,
+        codigo_generico_en_columna_clase=True,
+    ),
+    2019: LayoutCanasta(
+        hoja="Canasta Julio 2019=100.0",
+        fila_datos_inicio=12,
+        col_sector=1,
+        col_sector_nombre=None,
+        col_subsector=2,
+        col_subsector_nombre=None,
+        col_rama=3,
+        col_rama_nombre=None,
+        col_subrama=4,
+        col_subrama_nombre=None,
+        col_clase=5,
+        col_clase_nombre=None,
+        col_codigo_generico=6,
+        col_nombre_generico=7,
+        codigo_generico_en_columna_clase=False,
+    ),
+    2025: LayoutCanasta(
+        hoja="Canasta INPP",
+        fila_datos_inicio=9,
+        col_sector=1,
+        col_sector_nombre=2,
+        col_subsector=3,
+        col_subsector_nombre=4,
+        col_rama=5,
+        col_rama_nombre=6,
+        col_subrama=7,
+        col_subrama_nombre=8,
+        col_clase=9,
+        col_clase_nombre=10,
+        col_codigo_generico=11,
+        col_nombre_generico=12,
+        codigo_generico_en_columna_clase=False,
+    ),
+}

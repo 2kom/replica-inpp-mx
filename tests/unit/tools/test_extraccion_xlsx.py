@@ -6,15 +6,20 @@ from xml.etree import ElementTree as ET
 
 import openpyxl
 import pytest
-from canasta_inpp.esquema import LAYOUTS_XLSX
+from canasta_inpp.esquema import LAYOUTS_CANASTA, LAYOUTS_XLSX, LayoutCanasta, VersionCanastaScian
 from canasta_inpp.extraccion_xlsx import (
+    _COLUMNAS_CANASTA,
     _COLUMNAS_PONDERADORES,
     _NS_MAIN,
     _NS_PKG_REL,
     _NS_REL,
     _es_codigo_generico,
+    _es_fila_generico,
+    _es_fila_nota_pie,
     _leer_hoja_peso,
+    _texto_nivel,
     _valores_crudos,
+    extraer_canasta,
     extraer_ponderadores,
 )
 
@@ -360,3 +365,443 @@ def test_extraer_ponderadores_rechaza_generico_sobrante_en_una_hoja(tmp_path: Pa
     with pytest.raises(ValueError, match=r"BienesFinales") as exc_info:
         extraer_ponderadores(ruta, 2019)
     assert "sobran ['004']" in str(exc_info.value)
+
+
+# =============================================================================
+# -- extraer_canasta ----------------------------------------------------------
+# =============================================================================
+#
+# A diferencia de las hojas de ponderadores (un genérico = una fila con los 5
+# códigos S/SB/R/SR/C ya completos), el xlsx de canasta trae UN nivel por
+# fila -- hay que arrastrar el nivel vigente hasta topar con una fila de
+# genérico. Los 3 layouts reales tienen 3 "formas" distintas (ver
+# esquema.py::LayoutCanasta): 2019 (texto ya combinado, código de genérico en
+# columna propia), 2012 (igual, pero el código de genérico comparte columna
+# con Clase, se distingue por tipo) y 2025 (código+nombre en columnas
+# separadas por nivel, incluido el genérico).
+
+
+def _ancho_layout_canasta(layout: LayoutCanasta) -> int:
+    campos = (
+        layout.col_sector,
+        layout.col_sector_nombre,
+        layout.col_subsector,
+        layout.col_subsector_nombre,
+        layout.col_rama,
+        layout.col_rama_nombre,
+        layout.col_subrama,
+        layout.col_subrama_nombre,
+        layout.col_clase,
+        layout.col_clase_nombre,
+        layout.col_codigo_generico,
+        layout.col_nombre_generico,
+    )
+    return max(c for c in campos if c is not None) + 1
+
+
+def _fila_canasta(
+    layout: LayoutCanasta, valores: dict[int, str | int]
+) -> tuple[str | int | None, ...]:
+    """Fila de xlsx de canasta con columnas puestas por índice (col->valor), resto `None`.
+
+    Tipo acotado a `str | int | None` (no `object`) -- son los únicos tipos
+    de valor de celda que usan estos tests, y es lo que `Worksheet.append`
+    espera según sus stubs (`object` genérico no matchea `_CellGetValue`).
+    """
+    fila: list[str | int | None] = [None] * _ancho_layout_canasta(layout)
+    for col, valor in valores.items():
+        fila[col] = valor
+    return tuple(fila)
+
+
+def _col(col: int | None) -> int:
+    """Angosta `int | None` a `int` para las claves de `_fila_canasta`.
+
+    Los campos `col_<nivel>_nombre` de `LayoutCanasta` son `int | None` (solo
+    2025 los usa) -- acá siempre valen en los tests de 2025, el `assert` es
+    para el checker, no una comprobación nueva.
+    """
+    assert col is not None
+    return col
+
+
+def _armar_xlsx_canasta(
+    tmp_path: Path,
+    version: VersionCanastaScian,
+    filas_datos: list[tuple[str | int | None, ...]],
+) -> Path:
+    """xlsx sintético con la hoja y la `fila_datos_inicio` REALES de `version`.
+
+    El relleno de filas vacías antes de `fila_datos_inicio` prueba que
+    `extraer_canasta` usa el `min_row` del layout, no un valor fijo -- mismo
+    criterio que `test_leer_hoja_peso_usa_la_columna_del_layout_no_una_fija`
+    para el peso de ponderadores.
+    """
+    layout = LAYOUTS_CANASTA[version]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = layout.hoja
+    for _ in range(layout.fila_datos_inicio - 1):
+        ws.append(())
+    for fila in filas_datos:
+        ws.append(fila)
+    ruta = tmp_path / f"canasta_{version}.xlsx"
+    wb.save(ruta)
+    return ruta
+
+
+# -- _texto_nivel ---------------------------------------------------------
+
+
+def test_texto_nivel_texto_ya_combinado_se_usa_tal_cual() -> None:
+    # 2012/2019: col_sector_nombre es None -- el código y el nombre ya vienen
+    # pegados en una sola celda de texto, se usa tal cual
+    layout = LAYOUTS_CANASTA[2019]
+    fila = _fila_canasta(layout, {layout.col_sector: "11 Agricultura, cría y explotación..."})
+    assert _texto_nivel(layout, "sector", fila) == "11 Agricultura, cría y explotación..."
+
+
+def test_texto_nivel_columnas_separadas_se_unen_con_un_espacio() -> None:
+    # 2025: código y nombre en columnas separadas, hay que unirlos
+    layout = LAYOUTS_CANASTA[2025]
+    fila = _fila_canasta(
+        layout, {layout.col_sector: 11, _col(layout.col_sector_nombre): " Agricultura"}
+    )
+    assert _texto_nivel(layout, "sector", fila) == "11 Agricultura"
+
+
+def test_texto_nivel_columnas_separadas_sin_espacio_inicial_en_el_nombre() -> None:
+    # confirmado en el xlsx real de 2025: no todos los niveles traen el
+    # espacio inicial en la celda de nombre (ej. Rama sí, Sector no) --
+    # _texto_nivel no debe depender de eso
+    layout = LAYOUTS_CANASTA[2025]
+    fila = _fila_canasta(
+        layout, {layout.col_rama: 1111, _col(layout.col_rama_nombre): "Cultivo de soya"}
+    )
+    assert _texto_nivel(layout, "rama", fila) == "1111 Cultivo de soya"
+
+
+def test_texto_nivel_celda_vacia_devuelve_none() -> None:
+    layout = LAYOUTS_CANASTA[2019]
+    fila = _fila_canasta(layout, {})
+    assert _texto_nivel(layout, "sector", fila) is None
+
+
+# -- _es_fila_generico ------------------------------------------------------
+
+
+def test_es_fila_generico_2019_por_digito_en_columna_propia() -> None:
+    layout = LAYOUTS_CANASTA[2019]
+    assert _es_fila_generico(layout, _fila_canasta(layout, {layout.col_codigo_generico: "001"}))
+    assert not _es_fila_generico(
+        layout, _fila_canasta(layout, {layout.col_clase: "111110 Clase A"})
+    )
+
+
+def test_es_fila_generico_2012_por_tipo_no_por_posicion() -> None:
+    # el hallazgo concreto de 2012: el código de genérico comparte columna
+    # con Clase -- `int` puro es genérico, `str` es texto de nivel
+    layout = LAYOUTS_CANASTA[2012]
+    assert layout.codigo_generico_en_columna_clase
+    assert _es_fila_generico(layout, _fila_canasta(layout, {layout.col_codigo_generico: 1}))
+    assert not _es_fila_generico(
+        layout, _fila_canasta(layout, {layout.col_clase: "111110 Clase A"})
+    )
+
+
+# -- _es_fila_nota_pie --------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("fila", "esperado"),
+    [
+        ((None, "a/   El número asignado al producto genérico...", None), True),
+        ((None, "b/ otra nota al pie", None), True),
+        ((None, "11 Agricultura, cría y explotación de animales...", None), False),
+        ((None, "Servicio doméstico y otros servicios para el hogar", None), False),
+        ((None, None, None), False),
+    ],
+)
+def test_es_fila_nota_pie(fila: tuple[object, ...], esperado: bool) -> None:
+    assert _es_fila_nota_pie(fila) is esperado
+
+
+# -- extraer_canasta: wiring completo, una "forma" de layout por test -------
+
+
+def test_extraer_canasta_2019_arrastra_jerarquia_hasta_el_generico(tmp_path: Path) -> None:
+    version: VersionCanastaScian = 2019
+    layout = LAYOUTS_CANASTA[version]
+    filas = [
+        _fila_canasta(layout, {layout.col_sector: "11 Sector A"}),
+        _fila_canasta(layout, {layout.col_subsector: "111 Subsector A"}),
+        _fila_canasta(layout, {layout.col_rama: "1111 Rama A"}),
+        _fila_canasta(layout, {layout.col_subrama: "11111 Subrama A"}),
+        _fila_canasta(layout, {layout.col_clase: "111110 Clase A"}),
+        _fila_canasta(
+            layout, {layout.col_codigo_generico: "1", layout.col_nombre_generico: "Genérico A"}
+        ),
+        # segundo genérico bajo la misma rama -- solo cambia subrama/clase,
+        # prueba que sector/subsector/rama NO se resetean entre niveles que
+        # no cambiaron
+        _fila_canasta(layout, {layout.col_subrama: "11112 Subrama B"}),
+        _fila_canasta(layout, {layout.col_clase: "111120 Clase B"}),
+        _fila_canasta(
+            layout, {layout.col_codigo_generico: "2", layout.col_nombre_generico: "Genérico B"}
+        ),
+    ]
+    ruta = _armar_xlsx_canasta(tmp_path, version, filas)
+
+    df = extraer_canasta(ruta, version)
+
+    assert list(df.columns) == list(_COLUMNAS_CANASTA)
+    df = df.set_index("codigo")
+    assert list(df.index) == ["001", "002"]
+    assert df.at["001", "generico"] == "Genérico A"
+    assert df.at["001", "sector"] == "11 Sector A"
+    assert df.at["001", "subsector"] == "111 Subsector A"
+    assert df.at["001", "rama"] == "1111 Rama A"
+    assert df.at["001", "subrama"] == "11111 Subrama A"
+    assert df.at["001", "clase"] == "111110 Clase A"
+    assert df.at["002", "sector"] == "11 Sector A"
+    assert df.at["002", "subsector"] == "111 Subsector A"
+    assert df.at["002", "rama"] == "1111 Rama A"
+    assert df.at["002", "subrama"] == "11112 Subrama B"
+    assert df.at["002", "clase"] == "111120 Clase B"
+
+
+def test_extraer_canasta_ignora_filas_vacias_intermedias(tmp_path: Path) -> None:
+    # el xlsx real trae filas de separación visual entre bloques -- no deben
+    # resetear ni alterar el estado arrastrado
+    version: VersionCanastaScian = 2019
+    layout = LAYOUTS_CANASTA[version]
+    filas = [
+        _fila_canasta(layout, {layout.col_sector: "11 Sector A"}),
+        _fila_canasta(layout, {}),
+        _fila_canasta(layout, {layout.col_subsector: "111 Subsector A"}),
+        _fila_canasta(layout, {}),
+        _fila_canasta(layout, {layout.col_rama: "1111 Rama A"}),
+        _fila_canasta(layout, {layout.col_subrama: "11111 Subrama A"}),
+        _fila_canasta(layout, {layout.col_clase: "111110 Clase A"}),
+        _fila_canasta(
+            layout, {layout.col_codigo_generico: "1", layout.col_nombre_generico: "Genérico A"}
+        ),
+    ]
+    ruta = _armar_xlsx_canasta(tmp_path, version, filas)
+
+    df = extraer_canasta(ruta, version)
+
+    assert len(df) == 1
+    assert df.iloc[0]["subsector"] == "111 Subsector A"
+
+
+def test_extraer_canasta_filtra_nota_al_pie_sin_contaminar_estado(tmp_path: Path) -> None:
+    version: VersionCanastaScian = 2019
+    layout = LAYOUTS_CANASTA[version]
+    nota = (
+        "a/   El número asignado al producto genérico corresponde al definido "
+        "en el Cambio Año Base Julio 2019=100.0 a efecto de facilitar la "
+        "correspondencia en las series; excepto para aquellos productos "
+        "genéricos de nueva creación donde se asigna el consecutivo siguiente."
+    )
+    filas = [
+        _fila_canasta(layout, {layout.col_sector: "11 Sector A"}),
+        _fila_canasta(layout, {layout.col_subsector: "111 Subsector A"}),
+        _fila_canasta(layout, {layout.col_rama: "1111 Rama A"}),
+        _fila_canasta(layout, {layout.col_subrama: "11111 Subrama A"}),
+        _fila_canasta(layout, {layout.col_clase: "111110 Clase A"}),
+        _fila_canasta(
+            layout, {layout.col_codigo_generico: "1", layout.col_nombre_generico: "Genérico A"}
+        ),
+        # cae en la posición de "subsector", igual que en el xlsx real de 2019
+        _fila_canasta(layout, {layout.col_subsector: nota}),
+    ]
+    ruta = _armar_xlsx_canasta(tmp_path, version, filas)
+
+    df = extraer_canasta(ruta, version)
+
+    assert len(df) == 1  # la nota no debe generar una fila propia
+    assert df.iloc[0]["subsector"] == "111 Subsector A"  # ni pisar el estado vigente
+
+
+def test_extraer_canasta_rechaza_codigos_duplicados(tmp_path: Path) -> None:
+    # mismo contrato que extraer_ponderadores/_leer_hoja_peso -- un xlsx mal
+    # formado o corregido a mano no debe colarse en silencio con genéricos
+    # duplicados (multiplicaría filas/ponderadores en un cruce posterior)
+    version: VersionCanastaScian = 2019
+    layout = LAYOUTS_CANASTA[version]
+    filas = [
+        _fila_canasta(layout, {layout.col_sector: "11 Sector A"}),
+        _fila_canasta(
+            layout, {layout.col_codigo_generico: "1", layout.col_nombre_generico: "Genérico A"}
+        ),
+        _fila_canasta(
+            layout,
+            {layout.col_codigo_generico: "1", layout.col_nombre_generico: "Genérico A (dup)"},
+        ),
+    ]
+    ruta = _armar_xlsx_canasta(tmp_path, version, filas)
+
+    with pytest.raises(ValueError, match="duplicado") as exc_info:
+        extraer_canasta(ruta, version)
+    # no alcanza con "algún ValueError que diga duplicado" -- tiene que
+    # traer el código concreto, si no no sirve para diagnosticar el xlsx
+    assert "['001']" in str(exc_info.value)
+
+
+def test_extraer_canasta_2012_codigo_generico_comparte_columna_con_clase(tmp_path: Path) -> None:
+    version: VersionCanastaScian = 2012
+    layout = LAYOUTS_CANASTA[version]
+    filas = [
+        _fila_canasta(layout, {layout.col_sector: "11 Sector A"}),
+        _fila_canasta(layout, {layout.col_subsector: "111 Subsector A"}),
+        _fila_canasta(layout, {layout.col_rama: "1111 Rama A"}),
+        _fila_canasta(layout, {layout.col_subrama: "11111 Subrama A"}),
+        _fila_canasta(layout, {layout.col_clase: "111110 Clase A"}),  # texto -> nivel, NO genérico
+        _fila_canasta(
+            layout, {layout.col_codigo_generico: 1, layout.col_nombre_generico: "Genérico A"}
+        ),  # int -> genérico
+    ]
+    ruta = _armar_xlsx_canasta(tmp_path, version, filas)
+
+    df = extraer_canasta(ruta, version)
+
+    assert len(df) == 1
+    assert df.iloc[0]["codigo"] == "001"
+    assert df.iloc[0]["generico"] == "Genérico A"
+    assert df.iloc[0]["clase"] == "111110 Clase A"  # quedó el texto, no el int del genérico
+
+
+def test_extraer_canasta_2025_une_codigo_y_nombre_por_nivel(tmp_path: Path) -> None:
+    version: VersionCanastaScian = 2025
+    layout = LAYOUTS_CANASTA[version]
+    filas = [
+        _fila_canasta(layout, {layout.col_sector: 11, _col(layout.col_sector_nombre): " Sector A"}),
+        _fila_canasta(
+            layout, {layout.col_subsector: 111, _col(layout.col_subsector_nombre): " Subsector A"}
+        ),
+        _fila_canasta(layout, {layout.col_rama: 1111, _col(layout.col_rama_nombre): "Rama A"}),
+        _fila_canasta(
+            layout, {layout.col_subrama: 11111, _col(layout.col_subrama_nombre): "Subrama A"}
+        ),
+        _fila_canasta(layout, {layout.col_clase: 111110, _col(layout.col_clase_nombre): "Clase A"}),
+        _fila_canasta(
+            layout, {layout.col_codigo_generico: "001", layout.col_nombre_generico: "Genérico A"}
+        ),
+    ]
+    ruta = _armar_xlsx_canasta(tmp_path, version, filas)
+
+    df = extraer_canasta(ruta, version)
+
+    assert len(df) == 1
+    fila = df.iloc[0]
+    assert fila["sector"] == "11 Sector A"
+    assert fila["subsector"] == "111 Subsector A"
+    assert fila["rama"] == "1111 Rama A"
+    assert fila["subrama"] == "11111 Subrama A"
+    assert fila["clase"] == "111110 Clase A"
+    assert fila["codigo"] == "001"
+    assert fila["generico"] == "Genérico A"
+
+
+# ============================================================================
+# -- extraer_canasta contra los xlsx reales de INEGI ------------------------
+# ============================================================================
+#
+# Lo de arriba prueba la lógica del state machine de forma aislada. Lo de acá
+# abajo confirma que, además, produce lo esperado sobre los 3 xlsx reales --
+# en particular el cruce de códigos contra `extraer_ponderadores` (misma
+# canasta, mismo universo de genéricos, deberían compartir join key).
+#
+# requires_data: los xlsx viven en data/tests/xlsx/ (gitignoreado). Mismo
+# criterio de skip a nivel de clase que TestContraXlsxReales en
+# test_esquema.py.
+
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+_RUTAS_CANASTA: dict[VersionCanastaScian, Path] = {
+    2012: _REPO_ROOT / "data/tests/xlsx/2012/canasta.xlsx",
+    2019: _REPO_ROOT / "data/tests/xlsx/2019/Canasta_de_Genericos_CAB_INPP_2019.xlsx",
+    2025: _REPO_ROOT / "data/tests/xlsx/2025/canasta_inpp_2025.xlsx",
+}
+
+_RUTAS_PONDERADORES_REALES: dict[VersionCanastaScian, Path] = {
+    2012: _REPO_ROOT / "data/tests/xlsx/2012/ponderadores_inpp_inegi_2012.xlsx",
+    2019: _REPO_ROOT
+    / "data/tests/xlsx/2019"
+    / "COU_2017_Estructura_de_ponderaciones_PR_Julio_2019_2_Agosto_2019.xlsx",
+    2025: _REPO_ROOT / "data/tests/xlsx/2025/ponderadores_inpp_2025.xlsx",
+}
+
+_RUTAS_TODAS_CANASTA = [*_RUTAS_CANASTA.values(), *_RUTAS_PONDERADORES_REALES.values()]
+_FALTANTES_CANASTA = [str(r) for r in _RUTAS_TODAS_CANASTA if not r.exists()]
+_MOTIVO_SKIP_CANASTA = (
+    f"faltan xlsx reales (data/tests gitignoreado): {_FALTANTES_CANASTA}"
+    if _FALTANTES_CANASTA
+    else None
+)
+
+# genéricos esperados por versión -- confirmado en la sesión que armó
+# extraer_canasta, mismo conteo que extraer_ponderadores (567/560/570)
+_GENERICOS_ESPERADOS: dict[VersionCanastaScian, int] = {2012: 567, 2019: 560, 2025: 570}
+
+# discrepancia real de fuente (no bug de extracción, confirmada carácter por
+# carácter contra las celdas crudas de ambos xlsx del INEGI): "Chocolate en
+# tableta y en polvo" trae código 113 en el xlsx de canasta de 2019 pero 114
+# en el de ponderadores. Se deja explícita acá para que, si INEGI corrige el
+# archivo y la discrepancia desaparece, el test de abajo lo note (en vez de
+# quedar "de más" silenciosamente).
+_DIFERENCIAS_CODIGO_CONOCIDAS: dict[VersionCanastaScian, tuple[set[str], set[str]]] = {
+    2012: (set(), set()),
+    2019: ({"113"}, {"114"}),  # (solo en canasta, solo en ponderadores)
+    2025: (set(), set()),
+}
+
+
+class TestExtraerCanastaContraXlsxReales:
+    pytestmark = [
+        pytest.mark.requires_data,
+        pytest.mark.skipif(_MOTIVO_SKIP_CANASTA is not None, reason=_MOTIVO_SKIP_CANASTA or ""),
+    ]
+
+    @pytest.mark.parametrize("version", [2012, 2019, 2025])
+    def test_cantidad_de_generico_coincide_con_extraer_ponderadores(
+        self, version: VersionCanastaScian
+    ) -> None:
+        df = extraer_canasta(_RUTAS_CANASTA[version], version)
+        assert len(df) == _GENERICOS_ESPERADOS[version]
+        assert df["codigo"].is_unique
+
+    @pytest.mark.parametrize("version", [2012, 2019, 2025])
+    def test_codigos_calzan_con_extraer_ponderadores_salvo_diferencia_conocida(
+        self, version: VersionCanastaScian
+    ) -> None:
+        df_canasta = extraer_canasta(_RUTAS_CANASTA[version], version)
+        df_ponderadores = extraer_ponderadores(_RUTAS_PONDERADORES_REALES[version], version)
+
+        solo_canasta_esperado, solo_ponderadores_esperado = _DIFERENCIAS_CODIGO_CONOCIDAS[version]
+        assert set(df_canasta["codigo"]) - set(df_ponderadores["codigo"]) == solo_canasta_esperado
+        assert (
+            set(df_ponderadores["codigo"]) - set(df_canasta["codigo"]) == solo_ponderadores_esperado
+        )
+
+    @pytest.mark.parametrize("version", [2012, 2019, 2025])
+    def test_ninguna_columna_trae_texto_de_nota_al_pie(self, version: VersionCanastaScian) -> None:
+        df = extraer_canasta(_RUTAS_CANASTA[version], version)
+        for columna in ("sector", "subsector", "rama", "subrama", "clase", "generico"):
+            assert not df[columna].str.strip().str.match(r"^[a-z]/\s").any(), (
+                f"{version}/{columna}: quedó una nota al pie sin filtrar"
+            )
+
+    @pytest.mark.parametrize("version", [2012, 2019, 2025])
+    def test_soya_trae_la_jerarquia_completa_esperada(self, version: VersionCanastaScian) -> None:
+        # spot check contra un genérico conocido -- mismo código (001) y
+        # misma jerarquía en las 3 versiones (confirmado con los xlsx reales)
+        df = extraer_canasta(_RUTAS_CANASTA[version], version).set_index("codigo")
+        assert df.at["001", "generico"] == "Soya y otras oleaginosas"
+        assert str(df.at["001", "sector"]).startswith("11 Agricultura")
+        assert df.at["001", "subsector"] == "111 Agricultura"
+        assert str(df.at["001", "rama"]).startswith("1111 Cultivo de semillas")
+        assert str(df.at["001", "subrama"]).startswith("11111 Cultivo de soya")
+        assert df.at["001", "clase"] == "111110 Cultivo de soya"
