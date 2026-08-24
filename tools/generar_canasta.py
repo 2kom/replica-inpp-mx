@@ -109,39 +109,47 @@ def _validar_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.error(f"-o debe ser un directorio: {args.salida}")
 
 
-def _ejecutar_ponderadores(args: argparse.Namespace) -> None:
-    """Extrae ponderadores de xlsx y genera CSV intermedio."""
-
-    from canasta_inpp.extraccion_xlsx import extraer_ponderadores
-    from canasta_inpp.utilidades import guardar_csv
-
-    df = extraer_ponderadores(args.ponderadores, args.version)
-    guardar_csv(df, args.salida / f"ponderadores_{args.version}.csv", args.version)
-
-
-def _ejecutar_canasta(args: argparse.Namespace) -> None:
-    """Extrae árbol SCIAN de xlsx y genera CSV intermedio."""
-
-    pass
-
-
-def _ejecutar_encadenamientos(args: argparse.Namespace) -> None:
-    """Extrae factor de encadenamiento de xlsx y genera CSV intermedio."""
-
-    pass
-
-
 def main(argv: list[str] | None = None) -> None:
-    """Punto de entrada del CLI: parsea args y despacha la extracción."""
+    """Punto de entrada del CLI: parsea args, extrae, cruza y guarda el CSV.
+
+    Base siempre igual: extrae `--ponderadores`. `--canasta`/`--encadenamientos`
+    son aditivos encima de esa base, no modos separados.
+    """
     args = parsear_args(argv)
     args.salida.mkdir(parents=True, exist_ok=True)
 
-    if args.version == 2025 and args.encadenamientos is not None:
-        _ejecutar_encadenamientos(args)
-    elif args.canasta is not None:
-        _ejecutar_canasta(args)
-    else:
-        _ejecutar_ponderadores(args)
+    from canasta_inpp.extraccion_xlsx import (
+        extraer_canasta,
+        extraer_encadenamiento,
+        extraer_ponderadores,
+    )
+    from canasta_inpp.utilidades import (
+        guardar_csv,
+        normalizar_columnas_con_codigo,
+        normalizar_columnas_texto,
+        resolver_sector_agrupado,
+    )
+
+    df = extraer_ponderadores(args.ponderadores, args.version)
+
+    if args.canasta is not None:
+        if args.version == 2019:
+            # discrepancia real de fuente: "Chocolate en tableta y en polvo" es 113 en
+            # --canasta pero 114 en --ponderadores -- confirmado con la Tabla de
+            # correspondencia SCIAN 2013-2007 de INEGI (fusión de 113+114 hacia 113).
+            df["codigo"] = df["codigo"].replace({"114": "113"})
+        df_canasta = extraer_canasta(args.canasta, args.version)
+        columnas_jerarquia = ["generico", "sector", "subsector", "rama", "subrama", "clase"]
+        df = df.drop(columns=columnas_jerarquia).merge(df_canasta, on="codigo", how="left")
+
+    if args.encadenamientos is not None:
+        df_encadenamiento = extraer_encadenamiento(args.encadenamientos)
+        df = df.merge(df_encadenamiento, on="codigo", how="left")
+
+    df = resolver_sector_agrupado(df)
+    df = normalizar_columnas_con_codigo(df, ["sector", "subsector", "rama", "subrama", "clase"])
+    df = normalizar_columnas_texto(df, ["generico"])
+    guardar_csv(df, args.salida / f"ponderadores_{args.version}.csv", args.version)
 
 
 if __name__ == "__main__":

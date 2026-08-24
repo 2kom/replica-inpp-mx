@@ -17,7 +17,7 @@ _PATRON_ESPACIOS = re.compile(r"\s+")
 
 
 def normalizar_texto(texto: str) -> str:
-    """Minúsculas, sin tildes (conserva la ñ), sin puntuación, espacios simples."""
+    """Minúsculas, sin tildes (conserva la ñ), sin puntuación, sin espacios laterales ni dobles."""
     texto = texto.translate(_TRANS_TILDES).lower()
     texto = re.sub(r"[^\w\s]", "", texto)
     return _PATRON_ESPACIOS.sub(" ", texto).strip()
