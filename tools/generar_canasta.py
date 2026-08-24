@@ -2,7 +2,10 @@
 Generador de canastas INPP.
 
 Extrae datos de archivos xlsx del INEGI y genera un archivo CSV intermedio
-(ponderadores_<version>.csv) para el pipeline de réplica del INPP.
+(ponderadores_<version>.csv) para el pipeline de réplica del INPP, más un JSON
+de registro de la corrida (canasta_<version>_<timestamp>_<uuid>.json -- pesos y
+encadenamientos extraídos por columna, genéricos por categoría SCIAN) y un
+resumen impreso a stdout. Ver `tools/canasta_inpp/registro.py`.
 
 Uso:
     python tools/generar_canasta.py --version 2019 --ponderadores ruta.xlsx --canasta ruta.xlsx -o salida/
@@ -26,7 +29,7 @@ VERSION_ENCADENAMIENTO_OBLIGATORIO = 2025
 def parsear_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Define y parsea los flags del CLI, valida su combinación."""
     parser = argparse.ArgumentParser(
-        description="Genera archivos CSV de canastas INPP a partir de fuentes xlsx del INEGI.",
+        description="Genera archivos CSV y registros JSON de canastas INPP a partir de fuentes xlsx del INEGI.",
     )
 
     parser.add_argument(
@@ -63,7 +66,7 @@ def parsear_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         dest="salida",
         required=True,
-        help="Directorio de salida para el CSV.",
+        help="Directorio de salida para el CSV y el JSON de registro de la corrida.",
     )
 
     args = parser.parse_args(argv)
@@ -153,6 +156,7 @@ def main(argv: list[str] | None = None) -> None:
         extraer_encadenamiento,
         extraer_ponderadores,
     )
+    from canasta_inpp.registro import escribir_registro
     from canasta_inpp.utilidades import (
         guardar_csv,
         normalizar_columnas_con_codigo,
@@ -185,7 +189,17 @@ def main(argv: list[str] | None = None) -> None:
     df = resolver_sector_agrupado(df)
     df = normalizar_columnas_con_codigo(df, ["sector", "subsector", "rama", "subrama", "clase"])
     df = normalizar_columnas_texto(df, ["generico"])
-    guardar_csv(df, args.salida / f"ponderadores_{args.version}.csv", args.version)
+    ruta_csv = args.salida / f"ponderadores_{args.version}.csv"
+    guardar_csv(df, ruta_csv, args.version)
+    escribir_registro(
+        df,
+        version=args.version,
+        xlsx_ponderadores=args.ponderadores,
+        xlsx_canasta=args.canasta,
+        xlsx_encadenamientos=args.encadenamientos,
+        ruta_csv=ruta_csv,
+        ruta_salida=args.salida,
+    )
 
 
 if __name__ == "__main__":

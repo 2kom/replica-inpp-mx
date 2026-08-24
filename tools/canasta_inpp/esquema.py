@@ -26,6 +26,18 @@ COLUMNAS_BASE: tuple[str, ...] = (
     "encadenamiento uso final",
 )
 
+# agrupación semántica de las 7 columnas de peso (participación en VBP) --
+# complemento de COLUMNAS_ENCADENAMIENTO, usado en registro.py.
+COLUMNAS_PESO: tuple[str, ...] = (
+    "produccion total",
+    "bienes intermedios",
+    "bienes finales",
+    "demanda interna total",
+    "demanda interna consumo",
+    "demanda interna capital",
+    "exportaciones",
+)
+
 # agrupación semántica de las 4 columnas de encadenamiento -- no todas
 # admiten N/A, ver COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO.
 COLUMNAS_ENCADENAMIENTO: tuple[str, ...] = (

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast
 
 import canasta_inpp.extraccion_xlsx as extraccion_xlsx
+import canasta_inpp.registro as registro
 import canasta_inpp.utilidades as utilidades
 import pandas as pd
 import pytest
@@ -258,6 +259,7 @@ class _Pipeline:
     ruta_encadenamiento: Path
     columnas_normalizadas_codigo: list[str]
     columnas_normalizadas_texto: list[str]
+    registro: dict[str, object]
 
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.llamadas: list[str] = []
@@ -299,6 +301,11 @@ class _Pipeline:
             self.llamadas.append("guardar_csv")
             self.guardado = {"df": df, "ruta": ruta, "version": version}
 
+        def escribir_registro(df: pd.DataFrame, **kwargs: object) -> Path:
+            self.llamadas.append("escribir_registro")
+            self.registro = {"df": df, **kwargs}
+            return cast(Path, kwargs["ruta_salida"]) / "registro.json"
+
         monkeypatch.setattr(extraccion_xlsx, "extraer_ponderadores", extraer_ponderadores)
         monkeypatch.setattr(extraccion_xlsx, "extraer_canasta", extraer_canasta)
         monkeypatch.setattr(extraccion_xlsx, "extraer_encadenamiento", extraer_encadenamiento)
@@ -308,6 +315,7 @@ class _Pipeline:
         )
         monkeypatch.setattr(utilidades, "normalizar_columnas_texto", normalizar_columnas_texto)
         monkeypatch.setattr(utilidades, "guardar_csv", guardar_csv)
+        monkeypatch.setattr(registro, "escribir_registro", escribir_registro)
 
 
 @pytest.fixture
@@ -336,6 +344,7 @@ def test_main_solo_ponderadores_no_llama_canasta_ni_encadenamiento(
         "normalizar_columnas_con_codigo",
         "normalizar_columnas_texto",
         "guardar_csv",
+        "escribir_registro",
     ]
     assert pipeline.columnas_normalizadas_codigo == [
         "sector",
@@ -347,6 +356,13 @@ def test_main_solo_ponderadores_no_llama_canasta_ni_encadenamiento(
     assert pipeline.columnas_normalizadas_texto == ["generico"]
     assert pipeline.guardado["ruta"] == tmp_path / "salida" / "ponderadores_2019.csv"
     assert pipeline.guardado["version"] == 2019
+    assert pipeline.registro["version"] == 2019
+    assert pipeline.registro["xlsx_ponderadores"] == pipeline.ruta_ponderadores
+    assert pipeline.registro["xlsx_canasta"] is None
+    assert pipeline.registro["xlsx_encadenamientos"] is None
+    assert pipeline.registro["ruta_csv"] == pipeline.guardado["ruta"]
+    assert pipeline.registro["ruta_salida"] == tmp_path / "salida"
+    assert pipeline.registro["df"] is pipeline.guardado["df"]
 
 
 def test_main_con_canasta_reconcilia_114_a_113_solo_en_2019(
@@ -424,6 +440,7 @@ def test_main_con_encadenamientos_hace_merge_aditivo(tmp_path: Path, pipeline: _
         "normalizar_columnas_con_codigo",
         "normalizar_columnas_texto",
         "guardar_csv",
+        "escribir_registro",
     ]
     df = cast(pd.DataFrame, pipeline.guardado["df"])
     assert len(df) == 2
@@ -432,6 +449,13 @@ def test_main_con_encadenamientos_hace_merge_aditivo(tmp_path: Path, pipeline: _
         "200": "200.5",
     }
     assert pipeline.guardado["ruta"] == tmp_path / "salida" / "ponderadores_2025.csv"
+    assert pipeline.registro["version"] == 2025
+    assert pipeline.registro["xlsx_ponderadores"] == pipeline.ruta_ponderadores
+    assert pipeline.registro["xlsx_canasta"] is None
+    assert pipeline.registro["xlsx_encadenamientos"] == pipeline.ruta_encadenamiento
+    assert pipeline.registro["ruta_csv"] == pipeline.guardado["ruta"]
+    assert pipeline.registro["ruta_salida"] == tmp_path / "salida"
+    assert pipeline.registro["df"] is pipeline.guardado["df"]
 
 
 def test_main_con_encadenamientos_codigos_sobrantes_falla(
@@ -472,6 +496,7 @@ def test_main_con_canasta_y_encadenamientos_aplica_canasta_primero(
         "normalizar_columnas_con_codigo",
         "normalizar_columnas_texto",
         "guardar_csv",
+        "escribir_registro",
     ]
     df = cast(pd.DataFrame, pipeline.guardado["df"])
     assert len(df) == 2
@@ -483,3 +508,10 @@ def test_main_con_canasta_y_encadenamientos_aplica_canasta_primero(
         "100": "100.5",
         "200": "200.5",
     }
+    assert pipeline.registro["version"] == 2025
+    assert pipeline.registro["xlsx_ponderadores"] == pipeline.ruta_ponderadores
+    assert pipeline.registro["xlsx_canasta"] == pipeline.ruta_canasta
+    assert pipeline.registro["xlsx_encadenamientos"] == pipeline.ruta_encadenamiento
+    assert pipeline.registro["ruta_csv"] == pipeline.guardado["ruta"]
+    assert pipeline.registro["ruta_salida"] == tmp_path / "salida"
+    assert pipeline.registro["df"] is pipeline.guardado["df"]
