@@ -3,15 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-# Solo cubre las versiones que usan clasificación SCIAN (S/SB/R/SR/C). 2003
-# queda deliberadamente fuera de este tipo -- usa P/GD/DIV/R/SG/G-03, un
-# esquema previo a SCIAN, no un layout más de este mismo módulo. Ver
-# memoria de proyecto: 2003 diferido a v1.1 (requiere PDF, no solo xlsx).
+# 2003 usa un esquema previo a SCIAN (P/GD/DIV/R/SG) -- diferido a v1.1.
 VersionCanastaScian = Literal[2012, 2019, 2025]
 
-# Esquema final del CSV intermedio de ponderadores. Sin columna "version" --
-# mismo criterio que replica-inpc-mx (la versión va como parámetro de carga,
-# no como dato repetido en cada fila).
 COLUMNAS_BASE: tuple[str, ...] = (
     "generico",
     "codigo",
@@ -33,8 +27,8 @@ COLUMNAS_BASE: tuple[str, ...] = (
     "encadenamiento uso final",
 )
 
-# Las 4 columnas de encadenamiento (agrupación semántica, ej. para
-# dominio/calculo). NO todas admiten N/A -- ver COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO.
+# agrupación semántica de las 4 columnas de encadenamiento -- no todas
+# admiten N/A, ver COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO.
 COLUMNAS_ENCADENAMIENTO: tuple[str, ...] = (
     "encadenamiento total",
     "encadenamiento produccion nacional",
@@ -42,15 +36,8 @@ COLUMNAS_ENCADENAMIENTO: tuple[str, ...] = (
     "encadenamiento uso final",
 )
 
-# Único subconjunto de COLUMNAS_BASE donde una celda sin valor es legítima --
-# "N/A" real de INEGI, confirmado contra el xlsx real de 2025 (109/570 en
-# exportacion, 21/570 en uso_final) -- `encadenamiento total` y
-# `encadenamiento produccion nacional` NUNCA traen N/A ahí (cubren el
-# universo completo de genéricos, ver `extraer_encadenamiento`), así que
-# un NaN en esas 2 es defecto de extracción, no N/A legítimo -- mismo
-# tratamiento que ponderadores. `guardar_csv` usa esto para distinguir "-"
-# (N/A puntual, permitido) de un dato requerido faltante (nunca permitido,
-# ValueError).
+# único subconjunto donde NaN es N/A legítimo de INEGI -- las otras 2 nunca
+# traen N/A (ver extraer_encadenamiento).
 COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO: tuple[str, ...] = (
     "encadenamiento exportacion",
     "encadenamiento uso final",
@@ -61,18 +48,8 @@ COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO: tuple[str, ...] = (
 class LayoutXlsx:
     """Nombres de hoja y posiciones de columna del xlsx de ponderadores, por versión.
 
-    Las columnas están 0-indexadas sobre la tupla de fila que devuelve
-    `Worksheet.iter_rows(values_only=True)` (el índice 0 siempre es la columna
-    A del xlsx, vacía en las 3 versiones).
-
-    S/SB/R/SR/C/G/ACTIVIDAD ECONÓMICA caen en la misma posición (1-7) en las
-    3 versiones -- confirmado con los xlsx reales -- pero se dejan explícitas
-    acá en vez de hardcodeadas, por si alguna versión futura las corre.
-
-    La posición del peso SÍ varía por versión: en 2012 el peso arranca en la
-    columna 10 (header partido en 2 filas, con 2 columnas de separación); en
-    2019/2025 arranca en la 8, pegado a ACTIVIDAD ECONÓMICA. Confirmado
-    revisando los 3 xlsx reales fila por fila, no asumido por similitud.
+    Columnas 0-indexadas. La posición del peso varía por versión: 2012 usa la
+    columna 10, 2019/2025 usan la 8.
     """
 
     hoja_produccion_total: str
@@ -89,7 +66,7 @@ class LayoutXlsx:
     col_g: int
     col_actividad: int
 
-    col_peso_simple: int  # produccion total / bienes intermedios / bienes finales / exportaciones
+    col_peso_simple: int
     col_peso_demanda_total: int
     col_peso_demanda_consumo: int
     col_peso_demanda_capital: int
@@ -152,13 +129,8 @@ LAYOUTS_XLSX: dict[VersionCanastaScian, LayoutXlsx] = {
     ),
 }
 
-# Archivo de factor de encadenamiento -- solo existe para 2025, es un xlsx
-# aparte del de ponderadores (no vive dentro de LayoutXlsx porque no es una
-# hoja del mismo archivo). Posiciones confirmadas contra
-# data/tests/xlsx/2025/factor_de_encadenamiento_ti.xlsx.
+# solo existe para 2025, archivo aparte del de ponderadores.
 HOJA_ENCADENAMIENTO = "FACTOR DE ENCADENAMIENTO"
-# código de genérico -- misma posición que col_g de LAYOUTS_XLSX[2025] (este
-# xlsx repite el mismo layout S/SB/R/SR/C/G/ACTIVIDAD en columnas 1-7).
 COL_ENCADENAMIENTO_GENERICO = 6
 COL_ENCADENAMIENTO_TOTAL = 8
 COL_ENCADENAMIENTO_PRODUCCION_NACIONAL = 10
@@ -170,33 +142,15 @@ COL_ENCADENAMIENTO_USO_FINAL = 14
 class LayoutCanasta:
     """Nombre de hoja y posiciones de columna del xlsx de árbol SCIAN (canasta), por versión.
 
-    Layout estructuralmente distinto de `LayoutXlsx` (ponderadores): acá cada
-    fila trae el nivel jerárquico vigente (Sector, Subsector, Rama, Subrama o
-    Clase) UNA sola columna llena a la vez -- hay que arrastrar el valor
-    vigente de cada nivel fila a fila (`extraer_canasta` hace ese state
-    machine), no leerlo directo como en ponderadores. Confirmado fila por
-    fila contra los 3 xlsx reales, no asumido por similitud entre versiones.
-
-    `col_<nivel>_nombre`: en 2012/2019 el nombre completo del nivel ya viene
-    pegado al código en la misma celda de texto (ej. `"11 Agricultura, cría
-    y explotación..."`) -- en ese caso este campo es `None` y se usa
-    `col_<nivel>` tal cual. En 2025 código y nombre vienen en columnas
-    separadas (`col_<nivel>`=código entero, `col_<nivel>_nombre`=texto) y hay
-    que unirlos (`"{codigo} {nombre}"`) para mantener el mismo formato de
-    texto combinado en las 3 versiones.
-
-    `codigo_generico_en_columna_clase`: True únicamente en 2012 -- ese xlsx
-    NO tiene columna propia para el código de genérico, reusa `col_clase`
-    (la fila de Clase trae ahí un string, la fila de Genérico un `int` puro;
-    se distinguen por tipo, no por posición). Confirmado contra las 567
-    filas de genérico de `data/tests/xlsx/2012/canasta.xlsx`: código y
-    nombre YA están en celdas separadas (código como `int`, nombre como
-    `str`) -- a diferencia de INPC, acá no hace falta parsear un string
-    combinado tipo `"01 alimentos"` para separar código de nombre.
+    Cada fila trae un solo nivel jerárquico vigente a la vez (state machine en
+    `extraer_canasta`). `col_<nivel>_nombre` es `None` cuando código+nombre ya
+    vienen combinados en una sola celda (2012/2019); en 2025 vienen separados y
+    hay que unirlos. `codigo_generico_en_columna_clase` es True solo en 2012
+    (ese xlsx reusa `col_clase` para el código de genérico, distinguible por tipo).
     """
 
     hoja: str
-    fila_datos_inicio: int  # primera fila (1-indexed) con datos reales de la jerarquía
+    fila_datos_inicio: int
 
     col_sector: int
     col_sector_nombre: int | None

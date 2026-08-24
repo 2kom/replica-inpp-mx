@@ -46,15 +46,7 @@ _NS_PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
 def _es_codigo_generico(valor: object) -> bool:
-    """True si `valor` es un código de genérico real (dígitos), no la etiqueta del header.
-
-    2012 parte el header en 2 filas -- la segunda trae solo el texto literal
-    'G-11' en la posición de col_g, sin nada más en la fila (confirmado con
-    el xlsx real). `col_g is not None` sola confunde esa fila con un
-    genérico; hace falta filtrar que sea numérico/dígitos. Mismo filtro que
-    tests/unit/tools/test_esquema.py -- acá es la implementación real, ahí
-    solo se reusa para verificar contra el xlsx.
-    """
+    """True si `valor` es un código de genérico real (dígitos), no la etiqueta del header."""
     if isinstance(valor, int):
         return True
     if isinstance(valor, str):
@@ -63,15 +55,7 @@ def _es_codigo_generico(valor: object) -> bool:
 
 
 def _nombre_archivo_hoja(zf: zipfile.ZipFile, nombre_hoja: str) -> str:
-    """Resuelve un nombre de hoja (ej. "ProduccionTotal") al `sheetN.xml` correspondiente.
-
-    El `Target` de la relación puede venir relativo a `xl/` (`"worksheets/
-    sheet3.xml"`, así lo escriben los xlsx reales de INEGI/Excel) o absoluto
-    desde la raíz del paquete (`"/xl/worksheets/sheet1.xml"`, así lo escribe
-    `openpyxl` al guardar -- confirmado armando un xlsx de prueba con
-    `openpyxl.Workbook()`). Ambas formas son válidas en el estándar OOXML;
-    hay que resolver las 2, no asumir una sola.
-    """
+    """Resuelve un nombre de hoja al `sheetN.xml` correspondiente (Target relativo o absoluto)."""
     workbook = ET.fromstring(zf.read("xl/workbook.xml"))
     rid = next(
         s.get(f"{{{_NS_REL}}}id")
@@ -89,15 +73,7 @@ def _nombre_archivo_hoja(zf: zipfile.ZipFile, nombre_hoja: str) -> str:
 
 
 def _valores_crudos(ruta: Path, nombre_hoja: str) -> dict[str, str]:
-    """Lee el texto crudo (sin parsear a float) de las celdas numéricas de una hoja.
-
-    `openpyxl` parsea a `float` y no siempre preserva la representación
-    exacta del XML (notación científica se vuelve decimal, etc.) -- se usa
-    solo para las columnas de peso, donde perder un decimal sí importa (el
-    resto -- texto, código, jerarquía -- usa el valor ya parseado, ahí la
-    precisión no importa). Portado de
-    `replica-inpc-mx/tools/canasta_inpc/extraccion_xlsx.py::_valores_crudos`.
-    """
+    """Lee el texto crudo (sin parsear a float) de las celdas numéricas de una hoja."""
     with zipfile.ZipFile(ruta) as zf:
         xml = zf.read(_nombre_archivo_hoja(zf, nombre_hoja))
 
@@ -121,21 +97,7 @@ def _leer_hoja_peso(
     *,
     incluir_jerarquia: bool = False,
 ) -> pd.DataFrame:
-    """Lee una hoja de ponderadores, filas de genérico real, indexadas por `codigo`.
-
-    `columnas_peso` mapea posición de columna (en la fila cruda de openpyxl)
-    a nombre final de columna -- una hoja de peso simple pasa un solo par
-    (produccion total/bienes intermedios/bienes finales/exportaciones); la
-    hoja de demanda interna pasa 3 (total/consumo/capital). El peso se
-    guarda como el texto crudo del XML (`_valores_crudos`), no el `float`
-    de `openpyxl` -- mismo criterio que `guardar_csv` de replica-inpc-mx:
-    todos los decimales tal cual vienen en el xlsx, sin redondear.
-
-    `incluir_jerarquia` solo hace falta en la hoja ancla (producción total):
-    las 5 hojas repiten los mismos códigos S/SB/R/SR/C/generico para el
-    mismo genérico -- confirmado con los xlsx reales de 2012/2019/2025 --
-    así que no hace falta releerlos de cada hoja.
-    """
+    """Lee una hoja de ponderadores, filas de genérico real, indexadas por `codigo`."""
     wb = openpyxl.load_workbook(ruta, data_only=True)
     ws: Worksheet = wb[hoja]
     crudos = _valores_crudos(ruta, hoja)
@@ -172,23 +134,22 @@ def _leer_hoja_peso(
 def extraer_ponderadores(ruta: Path, version: VersionCanastaScian) -> pd.DataFrame:
     """Une las 5 hojas del xlsx de ponderadores en una sola tabla, una fila por genérico.
 
-    Columnas devueltas: `generico`, `codigo`, `sector`, `subsector`, `rama`,
-    `subrama`, `clase`, `produccion total`, `bienes intermedios`,
-    `bienes finales`, `demanda interna total`, `demanda interna consumo`,
-    `demanda interna capital`, `exportaciones` -- subconjunto de
-    `esquema.COLUMNAS_BASE` (faltan las 4 columnas de encadenamiento, que salen de
-    `--encadenamientos` y solo aplica a 2025; y `sector`/`subsector`/etc.
-    acá son código bare, sin nombre -- el nombre completo lo agrega
-    `--canasta`, todavía sin implementar).
+    Args:
+        ruta: Ruta al xlsx de ponderadores (layout definido en `esquema.LAYOUTS_XLSX`).
+        version: Versión de canasta -- determina el layout de columnas/hojas a leer.
 
-    Las columnas de peso vienen como `str` (texto crudo del xlsx, precisión
-    exacta) -- para operar numéricamente hace falta castear (`.astype(float)`
-    o `pd.to_numeric`), igual que hace `dominio/calculo` en replica-inpc-mx
-    con `canasta.df["ponderador"]`.
+    Returns:
+        DataFrame con columnas `generico`, `codigo`, `sector`, `subsector`, `rama`,
+        `subrama`, `clase` (código bare, sin nombre -- el nombre completo lo agrega
+        `extraer_canasta`), y las 7 columnas de peso (`produccion total`,
+        `bienes intermedios`, `bienes finales`, `demanda interna total/consumo/
+        capital`, `exportaciones`) como texto crudo del xlsx (precisión exacta,
+        sin castear a float).
 
-    `sector` no arranca en "producción total" nomás por convención -- esa
-    hoja es la única que nunca tiene ceros (universo completo de genéricos,
-    confirmado con los 3 xlsx reales), así que sirve de ancla para el resto.
+    Raises:
+        ValueError: Si alguna hoja trae código de genérico duplicado, o si el
+            conjunto de códigos de una hoja no coincide con el de la hoja ancla
+            (producción total).
     """
     layout = LAYOUTS_XLSX[version]
 
@@ -248,21 +209,13 @@ _NIVELES_JERARQUIA: tuple[str, ...] = ("sector", "subsector", "rama", "subrama",
 
 _COLUMNAS_CANASTA: tuple[str, ...] = ("generico", "codigo", *_NIVELES_JERARQUIA)
 
-# Cota defensiva contra el "rango fantasma" que reporta openpyxl en algunos
-# xlsx de INEGI -- `data/tests/xlsx/2012/canasta.xlsx` declara
-# `ws.dimensions == "A2:I1048565"` aunque los datos reales terminan en la
-# fila 1448 (confirmado). Sin cortar, `iter_rows` recorrería >1M filas
-# vacías. Se corta tras N filas en blanco consecutivas, no en una fila fija,
-# para no depender de cuántas filas reales tenga cada versión.
+# cota defensiva contra el "rango fantasma" que reporta openpyxl en algunos
+# xlsx de INEGI (dimensions declara >1M filas aunque los datos reales
+# terminan mucho antes) -- corta tras N filas en blanco consecutivas.
 _MAX_FILAS_VACIAS_CONSECUTIVAS = 50
 
-# Nota al pie estándar de INEGI (ej. "a/   El número asignado al producto
-# genérico corresponde al definido en el Cambio Año Base Julio 2019=100.0
-# ...; excepto para aquellos productos genéricos de nueva creación donde se
-# asigna el consecutivo siguiente."). Confirmada en 2019 y 2025 (2012 no la
-# trae). Cae en la posición de una columna de jerarquía -- subsector en
-# 2019, sector en 2025 -- así que sin filtrarla el state machine la
-# confundiría con un nombre de nivel válido.
+# nota al pie estándar de INEGI, cae en la posición de una columna de
+# jerarquía -- sin filtrarla el state machine la confunde con un nivel válido.
 _PATRON_NOTA_PIE = re.compile(r"^[a-z]/\s")
 
 
@@ -272,16 +225,7 @@ def _es_fila_nota_pie(fila: tuple[object, ...]) -> bool:
 
 
 def _texto_nivel(layout: LayoutCanasta, nivel: str, fila: tuple[object, ...]) -> str | None:
-    """Texto "código nombre" combinado de un nivel de jerarquía en `fila`, o `None` si vacío.
-
-    En 2012/2019 el código y el nombre ya vienen pegados en una sola celda
-    de texto (`col_<nivel>_nombre` es `None`) -- se usa tal cual. En 2025
-    vienen en columnas separadas y hay que unirlos, con el mismo formato
-    `"{codigo} {nombre}"` que ya trae el texto combinado de 2012/2019
-    (confirmado carácter por carácter contra el xlsx real de 2012, ej.
-    `"11 Agricultura, cría y explotación de animales, aprovechamiento
-    forestal, pesca y caza"`).
-    """
+    """Texto "código nombre" combinado de un nivel de jerarquía en `fila`, o `None` si vacío."""
     col_codigo = getattr(layout, f"col_{nivel}")
     valor_codigo = fila[col_codigo] if col_codigo < len(fila) else None
     if valor_codigo is None:
@@ -300,11 +244,8 @@ def _texto_nivel(layout: LayoutCanasta, nivel: str, fila: tuple[object, ...]) ->
 def _es_fila_generico(layout: LayoutCanasta, fila: tuple[object, ...]) -> bool:
     """True si `fila` es una fila de genérico (no de nivel de jerarquía).
 
-    En 2012 el código de genérico comparte columna con Clase -- se
-    distingue por tipo: `int` puro en la fila de genérico, `str` (texto de
-    clase, ej. `"111110 Cultivo de soya"`) en la fila de Clase. En
-    2019/2025 el código de genérico tiene columna propia, sin ambigüedad de
-    tipo -- basta con que la celda traiga dígitos.
+    2012: el código de genérico comparte columna con Clase -- se distingue por
+    tipo (`int` en fila de genérico, `str` en fila de Clase).
     """
     valor = fila[layout.col_codigo_generico]
     if layout.codigo_generico_en_columna_clase:
@@ -315,30 +256,9 @@ def _es_fila_generico(layout: LayoutCanasta, fila: tuple[object, ...]) -> bool:
 def extraer_canasta(ruta: Path, version: VersionCanastaScian) -> pd.DataFrame:
     """Lee el xlsx de árbol SCIAN (canasta) y arma una fila por genérico con su jerarquía.
 
-    A diferencia de `extraer_ponderadores` (donde cada fila de genérico ya
-    trae los 5 códigos S/SB/R/SR/C completos), acá cada fila trae **un solo
-    nivel jerárquico a la vez** -- Sector solo en su fila, Subsector solo en
-    la suya, etc. -- así que hace falta un state machine: se arrastra el
-    último valor visto de cada nivel (`estado`) hasta toparse con una fila
-    de genérico, momento en el que se emite una fila con el genérico +
-    el estado vigente de los 5 niveles.
-
     Columnas devueltas: `generico`, `codigo`, `sector`, `subsector`, `rama`,
-    `subrama`, `clase` -- `sector`..`clase` traen código+nombre combinado en
-    un solo texto (ej. `"11 Agricultura, cría y explotación de animales,
-    aprovechamiento forestal, pesca y caza"`), decisión ya tomada de máxima
-    densidad de información en el CSV (igual que en `replica-inpc-mx`). El
-    código de genérico se guarda como texto de 3 dígitos (`str(...).zfill(3)`),
-    mismo formato que usa `extraer_ponderadores` -- necesario para cruzar
-    ambas tablas por código de genérico (NO es código SCIAN: ese vive en
-    `sector`/`subsector`/`rama`/`subrama`/`clase`; el código de genérico es
-    un identificador aparte, 001-570). Compartir formato no garantiza
-    igualdad de valores entre los dos catálogos fuente -- confirmado que en
-    2019 difieren para un genérico puntual (113 en este xlsx, 114 en el de
-    ponderadores), ver CLAUDE.md § tools/canasta_inpp.
-
-    Lanza `ValueError` si el xlsx trae código de genérico duplicado (mismo
-    contrato que `extraer_ponderadores`/`_leer_hoja_peso`).
+    `subrama`, `clase` -- `sector`..`clase` traen código+nombre combinado.
+    Lanza `ValueError` si el xlsx trae código de genérico duplicado.
     """
     layout = LAYOUTS_CANASTA[version]
     wb = openpyxl.load_workbook(ruta, data_only=True)
@@ -411,31 +331,9 @@ _COLUMNAS_ENCADENAMIENTO_FACTOR: dict[int, str] = {
 def extraer_encadenamiento(ruta: Path) -> pd.DataFrame:
     """Lee el xlsx de factor de encadenamiento (solo 2025) -- una fila por genérico.
 
-    Más simple que `extraer_ponderadores`/`extraer_canasta`: una sola hoja,
-    sin state machine (cada fila de genérico ya trae los 4 factores
-    completos, igual que las hojas de ponderadores). Filtra filas de
-    agregado (Sector/Subsector/... sin código de genérico) con
-    `_es_codigo_generico`, mismo criterio que `extraer_ponderadores` -- este
-    xlsx repite el layout S/SB/R/SR/C/G/ACTIVIDAD de `LAYOUTS_XLSX[2025]` en
-    las columnas 1-7 (confirmado con el xlsx real), de ahí que
-    `COL_ENCADENAMIENTO_GENERICO` sea la misma posición que `col_g`.
-
-    Columnas devueltas: `codigo`, `encadenamiento total`,
-    `encadenamiento produccion nacional`, `encadenamiento exportacion`,
-    `encadenamiento uso final`. Los factores numéricos se guardan como texto
-    crudo del XML (`_valores_crudos`), mismo criterio de precisión exacta
-    que el peso de `extraer_ponderadores` -- son datos que después se
-    multiplican en el cálculo del índice, perder un decimal ahí sí importa.
-    `"N/A"` (genérico sin cobertura en esa columna, ej. sin producción de
-    exportación) se convierte a `NaN` real (`float("nan")`), no queda como
-    texto -- confirmado contra el xlsx real que `encadenamiento total` y
-    `encadenamiento produccion nacional` nunca traen `"N/A"` (cubren el
-    universo completo de genéricos), pero `encadenamiento exportacion` y
-    `encadenamiento uso final` sí (109 y 21 genéricos respectivamente en el
-    xlsx de 2025).
-
-    Lanza `ValueError` si el xlsx trae código de genérico duplicado (mismo
-    contrato que `extraer_ponderadores`/`extraer_canasta`).
+    Columnas: `codigo`, `encadenamiento total`, `encadenamiento produccion nacional`,
+    `encadenamiento exportacion`, `encadenamiento uso final` (texto crudo). `"N/A"` se
+    convierte a `NaN` real. Lanza `ValueError` si trae código duplicado.
     """
     wb = openpyxl.load_workbook(ruta, data_only=True)
     ws: Worksheet = wb[HOJA_ENCADENAMIENTO]

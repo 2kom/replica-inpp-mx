@@ -109,13 +109,39 @@ def _validar_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.error(f"-o debe ser un directorio: {args.salida}")
 
 
+def _ejecutar_ponderadores(args: argparse.Namespace) -> None:
+    """Extrae ponderadores de xlsx y genera CSV intermedio."""
+
+    from canasta_inpp.extraccion_xlsx import extraer_ponderadores
+    from canasta_inpp.utilidades import guardar_csv
+
+    df = extraer_ponderadores(args.ponderadores, args.version)
+    guardar_csv(df, args.salida / f"ponderadores_{args.version}.csv", args.version)
+
+
+def _ejecutar_canasta(args: argparse.Namespace) -> None:
+    """Extrae árbol SCIAN de xlsx y genera CSV intermedio."""
+
+    pass
+
+
+def _ejecutar_encadenamientos(args: argparse.Namespace) -> None:
+    """Extrae factor de encadenamiento de xlsx y genera CSV intermedio."""
+
+    pass
+
+
 def main(argv: list[str] | None = None) -> None:
     """Punto de entrada del CLI: parsea args y despacha la extracción."""
     args = parsear_args(argv)
     args.salida.mkdir(parents=True, exist_ok=True)
 
-    # TODO: extracción real — pendiente de implementar (canasta_inpp/extraccion_xlsx.py).
-    raise NotImplementedError("Extracción todavía no implementada — por ahora solo el CLI.")
+    if args.version == 2025 and args.encadenamientos is not None:
+        _ejecutar_encadenamientos(args)
+    elif args.canasta is not None:
+        _ejecutar_canasta(args)
+    else:
+        _ejecutar_ponderadores(args)
 
 
 if __name__ == "__main__":
