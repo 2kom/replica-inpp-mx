@@ -20,17 +20,40 @@ COLUMNAS_BASE: tuple[str, ...] = (
     "rama",
     "subrama",
     "clase",
-    "produccion_total",
-    "bienes_intermedios",
-    "bienes_finales",
-    "demanda_interna_total",
-    "demanda_interna_consumo",
-    "demanda_interna_capital",
+    "produccion total",
+    "bienes intermedios",
+    "bienes finales",
+    "demanda interna total",
+    "demanda interna consumo",
+    "demanda interna capital",
     "exportaciones",
-    "encadenamiento_total",
-    "encadenamiento_produccion_nacional",
-    "encadenamiento_exportacion",
-    "encadenamiento_uso_final",
+    "encadenamiento total",
+    "encadenamiento produccion nacional",
+    "encadenamiento exportacion",
+    "encadenamiento uso final",
+)
+
+# Las 4 columnas de encadenamiento (agrupación semántica, ej. para
+# dominio/calculo). NO todas admiten N/A -- ver COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO.
+COLUMNAS_ENCADENAMIENTO: tuple[str, ...] = (
+    "encadenamiento total",
+    "encadenamiento produccion nacional",
+    "encadenamiento exportacion",
+    "encadenamiento uso final",
+)
+
+# Único subconjunto de COLUMNAS_BASE donde una celda sin valor es legítima --
+# "N/A" real de INEGI, confirmado contra el xlsx real de 2025 (109/570 en
+# exportacion, 21/570 en uso_final) -- `encadenamiento total` y
+# `encadenamiento produccion nacional` NUNCA traen N/A ahí (cubren el
+# universo completo de genéricos, ver `extraer_encadenamiento`), así que
+# un NaN en esas 2 es defecto de extracción, no N/A legítimo -- mismo
+# tratamiento que ponderadores. `guardar_csv` usa esto para distinguir "-"
+# (N/A puntual, permitido) de un dato requerido faltante (nunca permitido,
+# ValueError).
+COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO: tuple[str, ...] = (
+    "encadenamiento exportacion",
+    "encadenamiento uso final",
 )
 
 
@@ -66,7 +89,7 @@ class LayoutXlsx:
     col_g: int
     col_actividad: int
 
-    col_peso_simple: int  # produccion_total / bienes_intermedios / bienes_finales / exportaciones
+    col_peso_simple: int  # produccion total / bienes intermedios / bienes finales / exportaciones
     col_peso_demanda_total: int
     col_peso_demanda_consumo: int
     col_peso_demanda_capital: int

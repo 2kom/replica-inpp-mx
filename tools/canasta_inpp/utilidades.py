@@ -2,8 +2,15 @@
 
 import re
 from collections.abc import Sequence
+from pathlib import Path
 
 import pandas as pd
+
+from canasta_inpp.esquema import (
+    COLUMNAS_BASE,
+    COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO,
+    VersionCanastaScian,
+)
 
 _TRANS_TILDES = str.maketrans("áéíóúüÁÉÍÓÚÜ", "aeiouuAEIOUU")
 _PATRON_ESPACIOS = re.compile(r"\s+")
@@ -163,3 +170,99 @@ def resolver_sector_agrupado(df: pd.DataFrame) -> pd.DataFrame:
 
     df["sector"] = df.apply(_resolver, axis=1)
     return df
+
+
+def guardar_csv(df: pd.DataFrame, ruta: Path, version: VersionCanastaScian) -> None:
+    """Completa el esquema fijo de `COLUMNAS_BASE` (18 columnas) y escribe el CSV.
+
+    3 semánticas distintas de "no hay valor", cada una con su propio marcador
+    -- no todas son lo mismo, ver negociación
+    `data/negociaciones/2026-08-22-utilidades-normalizacion-scian.md`:
+
+    - **Valor real, incluido cero** (ej. `exportaciones="0"` cuando un
+      genérico simplemente no se exporta) -- texto crudo del xlsx tal cual,
+      sin tocar acá.
+    - **Columna entera ausente en `df`** (ej. las 4 columnas de
+      encadenamiento cuando la versión no es 2025, o no se pasó
+      `--encadenamientos`) -- `""`, mismo criterio que `replica-inpc-mx`.
+      `df.reindex(columns=COLUMNAS_BASE, fill_value="")` solo rellena
+      columnas que NO estaban en `df` -- no toca celdas `NaN` dentro de una
+      columna que sí está presente (ver siguiente punto), así que ambos
+      casos quedan separados por construcción, sin necesidad de nombrar
+      columnas a mano.
+    - **Celda `NaN` dentro de una columna presente** -- SOLO legítimo en
+      `COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO` (`"N/A"` real de INEGI en
+      `encadenamiento exportacion`/`encadenamiento uso final`, que
+      `extraer_encadenamiento` ya convierte a `NaN` real): se guarda como
+      `"-"`, mismo carácter que ya usa `replica-inpc-mx` para categorías
+      binarias (`"X"`/`"-"`). `encadenamiento total`/`encadenamiento
+      produccion nacional` NO están en ese subconjunto -- confirmado que
+      NUNCA traen N/A en el xlsx real (cubren el universo completo de
+      genéricos), así que un `NaN` ahí es defecto de extracción, mismo
+      tratamiento que ponderadores. En cualquier otra columna (ponderadores,
+      jerarquía, `generico`) una celda `NaN` es dato requerido faltante, NO
+      un N/A legítimo -- `ValueError`, nunca `"-"` silencioso. La igualdad
+      de conjuntos de código entre hojas que valida `extraer_ponderadores`
+      garantiza que la FILA existe en las 5 hojas, no que cada celda de esa
+      fila tenga valor -- un xlsx real con una celda de peso vacía pasa esa
+      validación igual (confirmado con un xlsx sintético de prueba, ver
+      negociación `data/negociaciones/2026-08-22-utilidades-normalizacion-scian.md`
+      § "Seguimiento 5"/"Seguimiento 6").
+
+    Advierte (no lanza) si `df` trae columnas fuera de `COLUMNAS_BASE`: se
+    descartan igual, sin validación dura -- mismo contrato que
+    `replica-inpc-mx`. `version` no se usa en el cuerpo (el nombre de
+    archivo con la versión lo arma quien llama, ver `generar_canasta.py`)
+    -- se mantiene en la firma por paridad con el contrato de INPC y por si
+    una versión futura (2003, CMAP) necesita lógica distinta acá.
+    """
+    sobrantes = set(df.columns) - set(COLUMNAS_BASE)
+    if sobrantes:
+        print(
+            f"[canasta_inpp] Advertencia: columnas fuera de esquema descartadas: {sorted(sobrantes)}"
+        )
+
+    # capturado ANTES del reindex -- después, "codigo" siempre existe
+    # (`fill_value=""`), así que el chequeo de presencia perdería sentido
+    # si se hiciera sobre el df ya reindexado.
+    codigo_original = df["codigo"] if "codigo" in df.columns else None
+
+    df = df.reindex(columns=COLUMNAS_BASE, fill_value="")
+
+    columnas_sin_na_permitido = [
+        c for c in COLUMNAS_BASE if c not in COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO
+    ]
+    for columna in columnas_sin_na_permitido:
+        mask = df[columna].isna()
+        if mask.any():
+            # posición dentro del df (0-indexed), NO el índice de `df` --
+            # decisión de diseño, no un descuido: `guardar_csv` reporta por
+            # posición SIEMPRE, por contrato, sin importar qué índice traiga
+            # `df`. Hoy los 3 extractores (extraer_ponderadores/
+            # extraer_canasta/extraer_encadenamiento) siempre devuelven
+            # índice fresco -- `guardar_csv` no tiene todavía llamadores
+            # reales fuera de sus propios tests (`generar_canasta.py::main()`
+            # sigue en `NotImplementedError`), así que qué índice traerá tras
+            # un merge futuro es TODO, no una invariante ya verificada.
+            # Reportar por posición evita de raíz toda la clase de bugs de
+            # índice (etiquetas duplicadas rompiendo `.loc`, tipos numpy en
+            # el mensaje) sin depender de esa verificación futura.
+            posiciones = [pos for pos, es_nan in enumerate(mask) if es_nan]
+            identificadores: list[object] = [
+                codigo_original.iloc[pos]
+                if codigo_original is not None
+                and pd.notna(codigo_original.iloc[pos])
+                and codigo_original.iloc[pos] != ""
+                else pos
+                for pos in posiciones
+            ]
+            raise ValueError(
+                f"Columna '{columna}' trae {len(posiciones)} celda(s) sin valor -- solo "
+                f"encadenamiento exportacion/uso final permiten N/A. Códigos/posiciones "
+                f"afectadas: {identificadores}."
+            )
+
+    for columna in COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO:
+        df[columna] = df[columna].fillna("-")
+
+    df.to_csv(ruta, index=False)

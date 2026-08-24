@@ -31,12 +31,12 @@ _COLUMNAS_PONDERADORES: tuple[str, ...] = (
     "rama",
     "subrama",
     "clase",
-    "produccion_total",
-    "bienes_intermedios",
-    "bienes_finales",
-    "demanda_interna_total",
-    "demanda_interna_consumo",
-    "demanda_interna_capital",
+    "produccion total",
+    "bienes intermedios",
+    "bienes finales",
+    "demanda interna total",
+    "demanda interna consumo",
+    "demanda interna capital",
     "exportaciones",
 )
 
@@ -125,7 +125,7 @@ def _leer_hoja_peso(
 
     `columnas_peso` mapea posición de columna (en la fila cruda de openpyxl)
     a nombre final de columna -- una hoja de peso simple pasa un solo par
-    (produccion_total/bienes_intermedios/bienes_finales/exportaciones); la
+    (produccion total/bienes intermedios/bienes finales/exportaciones); la
     hoja de demanda interna pasa 3 (total/consumo/capital). El peso se
     guarda como el texto crudo del XML (`_valores_crudos`), no el `float`
     de `openpyxl` -- mismo criterio que `guardar_csv` de replica-inpc-mx:
@@ -173,10 +173,10 @@ def extraer_ponderadores(ruta: Path, version: VersionCanastaScian) -> pd.DataFra
     """Une las 5 hojas del xlsx de ponderadores en una sola tabla, una fila por genérico.
 
     Columnas devueltas: `generico`, `codigo`, `sector`, `subsector`, `rama`,
-    `subrama`, `clase`, `produccion_total`, `bienes_intermedios`,
-    `bienes_finales`, `demanda_interna_total`, `demanda_interna_consumo`,
-    `demanda_interna_capital`, `exportaciones` -- subconjunto de
-    `esquema.COLUMNAS_BASE` (falta `encadenamiento_*`, que sale de
+    `subrama`, `clase`, `produccion total`, `bienes intermedios`,
+    `bienes finales`, `demanda interna total`, `demanda interna consumo`,
+    `demanda interna capital`, `exportaciones` -- subconjunto de
+    `esquema.COLUMNAS_BASE` (faltan las 4 columnas de encadenamiento, que salen de
     `--encadenamientos` y solo aplica a 2025; y `sector`/`subsector`/etc.
     acá son código bare, sin nombre -- el nombre completo lo agrega
     `--canasta`, todavía sin implementar).
@@ -196,23 +196,23 @@ def extraer_ponderadores(ruta: Path, version: VersionCanastaScian) -> pd.DataFra
         ruta,
         layout.hoja_produccion_total,
         layout,
-        {layout.col_peso_simple: "produccion_total"},
+        {layout.col_peso_simple: "produccion total"},
         incluir_jerarquia=True,
     )
     bienes_intermedios = _leer_hoja_peso(
-        ruta, layout.hoja_bienes_intermedios, layout, {layout.col_peso_simple: "bienes_intermedios"}
+        ruta, layout.hoja_bienes_intermedios, layout, {layout.col_peso_simple: "bienes intermedios"}
     )
     bienes_finales = _leer_hoja_peso(
-        ruta, layout.hoja_bienes_finales, layout, {layout.col_peso_simple: "bienes_finales"}
+        ruta, layout.hoja_bienes_finales, layout, {layout.col_peso_simple: "bienes finales"}
     )
     demanda_interna = _leer_hoja_peso(
         ruta,
         layout.hoja_demanda_interna,
         layout,
         {
-            layout.col_peso_demanda_total: "demanda_interna_total",
-            layout.col_peso_demanda_consumo: "demanda_interna_consumo",
-            layout.col_peso_demanda_capital: "demanda_interna_capital",
+            layout.col_peso_demanda_total: "demanda interna total",
+            layout.col_peso_demanda_consumo: "demanda interna consumo",
+            layout.col_peso_demanda_capital: "demanda interna capital",
         },
     )
     exportaciones = _leer_hoja_peso(
@@ -401,10 +401,10 @@ def extraer_canasta(ruta: Path, version: VersionCanastaScian) -> pd.DataFrame:
 
 
 _COLUMNAS_ENCADENAMIENTO_FACTOR: dict[int, str] = {
-    COL_ENCADENAMIENTO_TOTAL: "encadenamiento_total",
-    COL_ENCADENAMIENTO_PRODUCCION_NACIONAL: "encadenamiento_produccion_nacional",
-    COL_ENCADENAMIENTO_EXPORTACION: "encadenamiento_exportacion",
-    COL_ENCADENAMIENTO_USO_FINAL: "encadenamiento_uso_final",
+    COL_ENCADENAMIENTO_TOTAL: "encadenamiento total",
+    COL_ENCADENAMIENTO_PRODUCCION_NACIONAL: "encadenamiento produccion nacional",
+    COL_ENCADENAMIENTO_EXPORTACION: "encadenamiento exportacion",
+    COL_ENCADENAMIENTO_USO_FINAL: "encadenamiento uso final",
 }
 
 
@@ -420,18 +420,18 @@ def extraer_encadenamiento(ruta: Path) -> pd.DataFrame:
     las columnas 1-7 (confirmado con el xlsx real), de ahí que
     `COL_ENCADENAMIENTO_GENERICO` sea la misma posición que `col_g`.
 
-    Columnas devueltas: `codigo`, `encadenamiento_total`,
-    `encadenamiento_produccion_nacional`, `encadenamiento_exportacion`,
-    `encadenamiento_uso_final`. Los factores numéricos se guardan como texto
+    Columnas devueltas: `codigo`, `encadenamiento total`,
+    `encadenamiento produccion nacional`, `encadenamiento exportacion`,
+    `encadenamiento uso final`. Los factores numéricos se guardan como texto
     crudo del XML (`_valores_crudos`), mismo criterio de precisión exacta
     que el peso de `extraer_ponderadores` -- son datos que después se
     multiplican en el cálculo del índice, perder un decimal ahí sí importa.
     `"N/A"` (genérico sin cobertura en esa columna, ej. sin producción de
     exportación) se convierte a `NaN` real (`float("nan")`), no queda como
-    texto -- confirmado contra el xlsx real que `encadenamiento_total` y
-    `encadenamiento_produccion_nacional` nunca traen `"N/A"` (cubren el
-    universo completo de genéricos), pero `encadenamiento_exportacion` y
-    `encadenamiento_uso_final` sí (109 y 21 genéricos respectivamente en el
+    texto -- confirmado contra el xlsx real que `encadenamiento total` y
+    `encadenamiento produccion nacional` nunca traen `"N/A"` (cubren el
+    universo completo de genéricos), pero `encadenamiento exportacion` y
+    `encadenamiento uso final` sí (109 y 21 genéricos respectivamente en el
     xlsx de 2025).
 
     Lanza `ValueError` si el xlsx trae código de genérico duplicado (mismo

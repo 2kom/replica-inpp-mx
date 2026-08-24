@@ -151,12 +151,12 @@ def test_extraer_ponderadores_cada_columna_de_peso_viene_de_su_propia_hoja(
     df = extraer_ponderadores(ruta, 2019).set_index("codigo")
 
     for i, codigo in enumerate(["001", "002", "003"], start=1):
-        assert float(str(df.at[codigo, "produccion_total"])) == pytest.approx(10.0 * i)
-        assert float(str(df.at[codigo, "bienes_intermedios"])) == pytest.approx(20.0 * i)
-        assert float(str(df.at[codigo, "bienes_finales"])) == pytest.approx(30.0 * i)
-        assert float(str(df.at[codigo, "demanda_interna_total"])) == pytest.approx(40.0 * i)
-        assert float(str(df.at[codigo, "demanda_interna_consumo"])) == pytest.approx(41.0 * i)
-        assert float(str(df.at[codigo, "demanda_interna_capital"])) == pytest.approx(42.0 * i)
+        assert float(str(df.at[codigo, "produccion total"])) == pytest.approx(10.0 * i)
+        assert float(str(df.at[codigo, "bienes intermedios"])) == pytest.approx(20.0 * i)
+        assert float(str(df.at[codigo, "bienes finales"])) == pytest.approx(30.0 * i)
+        assert float(str(df.at[codigo, "demanda interna total"])) == pytest.approx(40.0 * i)
+        assert float(str(df.at[codigo, "demanda interna consumo"])) == pytest.approx(41.0 * i)
+        assert float(str(df.at[codigo, "demanda interna capital"])) == pytest.approx(42.0 * i)
         assert float(str(df.at[codigo, "exportaciones"])) == pytest.approx(50.0 * i)
 
 
@@ -166,12 +166,12 @@ def test_extraer_ponderadores_peso_es_texto_no_float(tmp_path: Path) -> None:
     ruta = _armar_xlsx_ponderadores_2019(tmp_path)
     df = extraer_ponderadores(ruta, 2019)
     for columna in (
-        "produccion_total",
-        "bienes_intermedios",
-        "bienes_finales",
-        "demanda_interna_total",
-        "demanda_interna_consumo",
-        "demanda_interna_capital",
+        "produccion total",
+        "bienes intermedios",
+        "bienes finales",
+        "demanda interna total",
+        "demanda interna consumo",
+        "demanda interna capital",
         "exportaciones",
     ):
         assert df[columna].dtype == object
@@ -203,10 +203,10 @@ def test_leer_hoja_peso_usa_la_columna_del_layout_no_una_fija(tmp_path: Path) ->
         ruta,
         layout_2012.hoja_produccion_total,
         layout_2012,
-        {layout_2012.col_peso_simple: "produccion_total"},
+        {layout_2012.col_peso_simple: "produccion total"},
         incluir_jerarquia=True,
     )
-    assert float(str(df.at["001", "produccion_total"])) == pytest.approx(12.5)
+    assert float(str(df.at["001", "produccion total"])) == pytest.approx(12.5)
 
 
 # -- _valores_crudos: solo celdas numéricas, mapeadas por coordenada -----
@@ -277,7 +277,7 @@ def test_extraer_ponderadores_preserva_el_texto_crudo_exacto(tmp_path: Path) -> 
     _forzar_valor_crudo(ruta, layout.hoja_produccion_total, "I2", "5.9196304989416844E-3")
 
     df = extraer_ponderadores(ruta, 2019).set_index("codigo")
-    assert df.at["001", "produccion_total"] == "5.9196304989416844E-3"
+    assert df.at["001", "produccion total"] == "5.9196304989416844E-3"
 
 
 # -- extraer_ponderadores: catálogos inconsistentes entre hojas -------------
@@ -299,7 +299,7 @@ def test_leer_hoja_peso_rechaza_codigos_duplicados(tmp_path: Path) -> None:
             ruta,
             layout.hoja_produccion_total,
             layout,
-            {layout.col_peso_simple: "produccion_total"},
+            {layout.col_peso_simple: "produccion total"},
             incluir_jerarquia=True,
         )
 
@@ -905,13 +905,13 @@ def test_extraer_encadenamiento_convierte_na_a_nan_real(tmp_path: Path) -> None:
 
     df = extraer_encadenamiento(ruta).set_index("codigo")
 
-    assert df.at["001", "encadenamiento_exportacion"] != "N/A"
-    assert df.at["001", "encadenamiento_uso_final"] != "N/A"
-    assert pd.isna(df.at["001", "encadenamiento_exportacion"])
-    assert pd.isna(df.at["001", "encadenamiento_uso_final"])
+    assert df.at["001", "encadenamiento exportacion"] != "N/A"
+    assert df.at["001", "encadenamiento uso final"] != "N/A"
+    assert pd.isna(df.at["001", "encadenamiento exportacion"])
+    assert pd.isna(df.at["001", "encadenamiento uso final"])
     # las columnas SIN "N/A" no deben verse afectadas por la conversión
-    assert not pd.isna(df.at["001", "encadenamiento_total"])
-    assert not pd.isna(df.at["001", "encadenamiento_produccion_nacional"])
+    assert not pd.isna(df.at["001", "encadenamiento total"])
+    assert not pd.isna(df.at["001", "encadenamiento produccion nacional"])
 
 
 def test_extraer_encadenamiento_preserva_el_texto_crudo_exacto_en_las_4_columnas(
@@ -935,10 +935,10 @@ def test_extraer_encadenamiento_preserva_el_texto_crudo_exacto_en_las_4_columnas
     _forzar_valor_crudo(ruta, HOJA_ENCADENAMIENTO, "O1", "4.2974375113934084")
 
     df = extraer_encadenamiento(ruta).set_index("codigo")
-    assert df.at["001", "encadenamiento_total"] == "1.0738593778483521"
-    assert df.at["001", "encadenamiento_produccion_nacional"] == "2.1487187556967042"
-    assert df.at["001", "encadenamiento_exportacion"] == "3.2230781335450563"
-    assert df.at["001", "encadenamiento_uso_final"] == "4.2974375113934084"
+    assert df.at["001", "encadenamiento total"] == "1.0738593778483521"
+    assert df.at["001", "encadenamiento produccion nacional"] == "2.1487187556967042"
+    assert df.at["001", "encadenamiento exportacion"] == "3.2230781335450563"
+    assert df.at["001", "encadenamiento uso final"] == "4.2974375113934084"
 
 
 def test_extraer_encadenamiento_rechaza_codigos_duplicados(tmp_path: Path) -> None:
@@ -983,12 +983,12 @@ class TestExtraerEncadenamientoContraXlsxReal:
         # el universo completo de genéricos -- a diferencia de exportación y
         # uso_final, que sí traen "N/A" para genéricos sin esa cobertura
         df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL)
-        assert not df["encadenamiento_total"].isna().any()
-        assert not df["encadenamiento_produccion_nacional"].isna().any()
+        assert not df["encadenamiento total"].isna().any()
+        assert not df["encadenamiento produccion nacional"].isna().any()
 
     def test_exportacion_y_uso_final_si_traen_nan(self) -> None:
         df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL)
-        for columna in ("encadenamiento_exportacion", "encadenamiento_uso_final"):
+        for columna in ("encadenamiento exportacion", "encadenamiento uso final"):
             assert df[columna].isna().any(), f"{columna}: se esperaba al menos un NaN"
 
     def test_soya_trae_los_4_factores_esperados(self) -> None:
@@ -998,10 +998,10 @@ class TestExtraerEncadenamientoContraXlsxReal:
         # mismo para este genérico en el xlsx real -- confirmado, un swap
         # ahí es invisible. Ver test de abajo (código 065) para eso.
         df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL).set_index("codigo")
-        assert df.at["001", "encadenamiento_total"] == "1.0738593778483521"
-        assert df.at["001", "encadenamiento_produccion_nacional"] == "1.0738593778483525"
-        assert df.at["001", "encadenamiento_exportacion"] == "1.0738593778483525"
-        assert df.at["001", "encadenamiento_uso_final"] == "1.0738593778483525"
+        assert df.at["001", "encadenamiento total"] == "1.0738593778483521"
+        assert df.at["001", "encadenamiento produccion nacional"] == "1.0738593778483525"
+        assert df.at["001", "encadenamiento exportacion"] == "1.0738593778483525"
+        assert df.at["001", "encadenamiento uso final"] == "1.0738593778483525"
 
     def test_generico_con_4_valores_distintos_no_se_confunde_entre_columnas(self) -> None:
         # código 065: las 4 columnas traen valores DISTINTOS entre sí en el
@@ -1009,7 +1009,7 @@ class TestExtraerEncadenamientoContraXlsxReal:
         # exportación<->uso_final, o perder la precisión cruda en alguna de
         # las 3 columnas no-total, sí cambia el resultado y el test lo nota
         df = extraer_encadenamiento(_RUTA_ENCADENAMIENTO_REAL).set_index("codigo")
-        assert df.at["065", "encadenamiento_total"] == "1.4165194322661865"
-        assert df.at["065", "encadenamiento_produccion_nacional"] == "1.4141735579391901"
-        assert df.at["065", "encadenamiento_exportacion"] == "1.516797214010164"
-        assert df.at["065", "encadenamiento_uso_final"] == "1.4598847030020605"
+        assert df.at["065", "encadenamiento total"] == "1.4165194322661865"
+        assert df.at["065", "encadenamiento produccion nacional"] == "1.4141735579391901"
+        assert df.at["065", "encadenamiento exportacion"] == "1.516797214010164"
+        assert df.at["065", "encadenamiento uso final"] == "1.4598847030020605"

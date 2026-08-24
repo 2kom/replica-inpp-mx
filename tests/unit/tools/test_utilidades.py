@@ -1,14 +1,27 @@
 from __future__ import annotations
 
+from pathlib import Path
+
+import openpyxl
 import pandas as pd
 import pytest
+from canasta_inpp.esquema import COLUMNAS_BASE, LAYOUTS_XLSX
+from canasta_inpp.extraccion_xlsx import extraer_ponderadores
 from canasta_inpp.utilidades import (
+    guardar_csv,
     normalizar_columnas_con_codigo,
     normalizar_columnas_texto,
     normalizar_texto,
     normalizar_texto_con_codigo,
     resolver_sector_agrupado,
 )
+
+# -- guardar_csv: helper -------------------------------------------------
+
+
+def _leer(ruta: Path) -> pd.DataFrame:
+    return pd.read_csv(ruta, dtype=str, keep_default_na=False)
+
 
 # -- normalizar_texto -------------------------------------------------------
 
@@ -260,3 +273,266 @@ def test_resolver_sector_agrupado_mensaje_de_error_usa_indice_de_fila_sin_column
     df = pd.DataFrame({"sector": ["31-33 Industrias manufactureras"], "subsector": ["481"]})
     with pytest.raises(ValueError, match="fila 0"):
         resolver_sector_agrupado(df)
+
+
+# -- guardar_csv ---------------------------------------------------------
+
+
+def test_guardar_csv_reindexa_a_columnas_base_y_rellena_columna_ausente(tmp_path: Path) -> None:
+    df = pd.DataFrame({"generico": ["Soya"], "codigo": ["001"]})
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2019)
+    leido = _leer(ruta)
+    assert list(leido.columns) == list(COLUMNAS_BASE)
+    assert leido.loc[0, "generico"] == "Soya"
+    assert leido.loc[0, "produccion total"] == ""  # columna entera ausente -> vacio, no "-"
+
+
+def test_guardar_csv_preserva_cero_real_de_ponderador(tmp_path: Path) -> None:
+    # 0 es un valor real (el generico no participa en ese destino/etapa), no una ausencia
+    df = pd.DataFrame({"generico": ["Arroz"], "exportaciones": ["0"]})
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2019)
+    leido = _leer(ruta)
+    assert leido.loc[0, "exportaciones"] == "0"
+
+
+def test_guardar_csv_preserva_string_exacto_de_ponderador(tmp_path: Path) -> None:
+    # precision cruda del xlsx (notacion cientifica) no debe convertirse a float
+    df = pd.DataFrame({"generico": ["Soya"], "produccion total": ["3.0944225043218539E-2"]})
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2019)
+    leido = _leer(ruta)
+    assert leido.loc[0, "produccion total"] == "3.0944225043218539E-2"
+
+
+def test_guardar_csv_celda_nan_en_columna_presente_se_guarda_como_guion(tmp_path: Path) -> None:
+    # "N/A" de INEGI en encadenamiento_exportacion, ya convertido a NaN por
+    # extraer_encadenamiento -- celda puntual sin dato, no columna ausente
+    df = pd.DataFrame(
+        {
+            "generico": ["Soya", "Frijol"],
+            "encadenamiento exportacion": ["1.416519", float("nan")],
+        }
+    )
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2025)
+    leido = _leer(ruta)
+    assert leido.loc[0, "encadenamiento exportacion"] == "1.416519"
+    assert leido.loc[1, "encadenamiento exportacion"] == "-"
+
+
+def test_guardar_csv_lanza_valueerror_si_ponderador_tiene_nan() -> None:
+    # regresion: fillna("-") universal confundia un ponderador vacio (dato
+    # requerido, nunca deberia faltar) con el N/A legitimo de encadenamiento.
+    # ver negociacion data/negociaciones/2026-08-22-utilidades-normalizacion-scian.md
+    # § "Seguimiento 5"
+    df = pd.DataFrame(
+        {"generico": ["Soya", "Frijol"], "codigo": ["001", "002"], "exportaciones": ["1.5", None]}
+    )
+    with pytest.raises(ValueError, match="'exportaciones' trae 1 celda"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_lanza_valueerror_si_generico_tiene_nan() -> None:
+    # no solo ponderadores -- cualquier columna fuera de encadenamiento
+    df = pd.DataFrame({"generico": ["Soya", None], "codigo": ["001", "002"]})
+    with pytest.raises(ValueError, match="'generico'"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_mensaje_de_error_identifica_codigos_afectados() -> None:
+    df = pd.DataFrame({"generico": ["Soya", "Frijol", "Garbanzo"], "codigo": ["001", "002", "003"]})
+    df.loc[[1, 2], "generico"] = None
+    with pytest.raises(ValueError, match=r"\['002', '003'\]"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_no_lanza_si_solo_columnas_de_encadenamiento_tienen_nan(
+    tmp_path: Path,
+) -> None:
+    # sanity check inverso: NaN permitido en encadenamiento no debe disparar el ValueError
+    df = pd.DataFrame(
+        {
+            "generico": ["Soya"],
+            "encadenamiento exportacion": [float("nan")],
+            "encadenamiento uso final": [float("nan")],
+        }
+    )
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2025)  # no debe lanzar
+    leido = _leer(ruta)
+    assert leido.loc[0, "encadenamiento exportacion"] == "-"
+    assert leido.loc[0, "encadenamiento uso final"] == "-"
+
+
+# -- guardar_csv: encadenamiento total/produccion nacional NUNCA admiten N/A -
+# Regresión: COLUMNAS_ENCADENAMIENTO (las 4) se usaba como excepción completa
+# -- total/produccion_nacional NUNCA traen N/A en el xlsx real (confirmado en
+# extraer_encadenamiento), así que un NaN ahí es defecto de extracción, mismo
+# tratamiento que ponderadores. Ver negociación
+# data/negociaciones/2026-08-22-utilidades-normalizacion-scian.md § "Seguimiento 6".
+
+
+@pytest.mark.parametrize("columna", ["encadenamiento total", "encadenamiento produccion nacional"])
+def test_guardar_csv_lanza_valueerror_si_encadenamiento_total_o_produccion_nacional_tiene_nan(
+    columna: str,
+) -> None:
+    df = pd.DataFrame({"generico": ["Soya"], "codigo": ["001"], columna: [float("nan")]})
+    with pytest.raises(ValueError, match=f"'{columna}'"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2025)
+
+
+# -- guardar_csv: fallback a posición cuando no hay codigo utilizable -------
+# Decisión de diseño: reportar POSICIÓN dentro del df (0-indexed) SIEMPRE, por
+# contrato, nunca el índice de `df` -- sin importar qué índice traiga `df`.
+# Los 3 extractores actuales (extraer_ponderadores/extraer_canasta/
+# extraer_encadenamiento) siempre devuelven índice fresco -- `guardar_csv` no
+# tiene todavía llamadores reales fuera de estos tests
+# (`generar_canasta.py::main()` sigue en `NotImplementedError`), así que qué
+# índice traerá tras un merge futuro es TODO, no una invariante ya verificada.
+# Ignorar el índice de raíz evita toda la clase de bugs de índice (etiquetas
+# duplicadas rompiendo `.loc`, tipos numpy en el mensaje) sin depender de esa
+# verificación futura. Ver negociación
+# data/negociaciones/2026-08-22-utilidades-normalizacion-scian.md § "Seguimiento 10".
+
+
+def test_guardar_csv_mensaje_de_error_usa_posicion_cuando_no_hay_columna_codigo() -> None:
+    # sin "codigo" en el df original (ej. solo --ponderadores sin cruce) --
+    # el fallback usa la posición, no el "codigo" vacío que deja el reindex
+    df = pd.DataFrame({"generico": ["Soya", None]})
+    with pytest.raises(ValueError, match=r"\[1\]"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_mensaje_de_error_usa_posicion_si_codigo_es_none_en_la_misma_fila() -> None:
+    # codigo SÍ existe como columna, pero justo la fila con el problema tiene codigo=None --
+    # no sirve como identificador, cae a la posición igual que si no hubiera columna codigo
+    df = pd.DataFrame({"generico": ["Soya", None], "codigo": ["001", None]})
+    with pytest.raises(ValueError, match=r"\[1\]"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_mensaje_de_error_usa_posicion_si_codigo_es_vacio_en_la_misma_fila() -> None:
+    df = pd.DataFrame({"generico": ["Soya", None], "codigo": ["001", ""]})
+    with pytest.raises(ValueError, match=r"\[1\]"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_mensaje_de_error_usa_codigo_cuando_esta_disponible_en_la_fila() -> None:
+    # sanity check inverso: si codigo SÍ tiene valor en la fila afectada, se usa (no la posición)
+    df = pd.DataFrame({"generico": ["Soya", "Frijol", None], "codigo": ["001", "002", "003"]})
+    with pytest.raises(ValueError, match=r"\['003'\]"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_mensaje_de_error_con_indice_duplicado_no_rompe() -> None:
+    # regresion: .loc[etiqueta] con índice duplicado devuelve una Series, no
+    # un escalar -- rompe pd.notna(...) con "the truth value of a Series is
+    # ambiguous" en vez del ValueError contractual. Enumerar por posición
+    # (nunca .loc por etiqueta) es inmune, sin importar duplicados.
+    df = pd.DataFrame(
+        {"generico": ["Soya", None], "codigo": ["001", "002"]},
+        index=[7, 7],
+    )
+    with pytest.raises(ValueError, match=r"\['002'\]"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_mensaje_de_error_ignora_indice_custom_reporta_posicion() -> None:
+    # con índice no trivial [10, 20], se reporta la posición (1), no la
+    # etiqueta (20) -- ver nota de diseño arriba del bloque.
+    df = pd.DataFrame({"generico": ["Soya", None]}, index=[10, 20])
+    with pytest.raises(ValueError, match=r"\[1\]"):
+        guardar_csv(df, Path("/tmp/no-deberia-escribirse.csv"), 2019)
+
+
+def test_guardar_csv_integrado_extraer_ponderadores_con_peso_vacio_lanza(tmp_path: Path) -> None:
+    # prueba integrada pedida por el evaluador: extraer_ponderadores -> guardar_csv,
+    # con un xlsx real donde una celda de peso viene vacia (None) -- la igualdad
+    # de codigos entre hojas NO garantiza que cada celda tenga valor
+    layout = LAYOUTS_XLSX[2019]
+
+    def _fila(codigo: str, nombre: str, peso: object) -> tuple:
+        return (None, 11, 111, 1111, 11111, 111110, codigo, nombre, peso)
+
+    wb = openpyxl.Workbook()
+    hoja_por_defecto = wb.active
+    assert hoja_por_defecto is not None
+    wb.remove(hoja_por_defecto)
+
+    for hoja in (
+        layout.hoja_produccion_total,
+        layout.hoja_bienes_intermedios,
+        layout.hoja_bienes_finales,
+        layout.hoja_exportaciones,
+    ):
+        ws = wb.create_sheet(hoja)
+        ws.append(_fila("001", "Soya y otras oleaginosas", 10.0))
+
+    # demanda interna trae 3 pesos por fila -- el segundo (consumo) queda vacio
+    ws = wb.create_sheet(layout.hoja_demanda_interna)
+    ws.append(
+        (None, 11, 111, 1111, 11111, 111110, "001", "Soya y otras oleaginosas", 40.0, None, 42.0)
+    )
+
+    ruta_xlsx = tmp_path / "ponderadores_2019.xlsx"
+    wb.save(ruta_xlsx)
+
+    df = extraer_ponderadores(ruta_xlsx, 2019)
+    assert df.loc[0, "demanda interna consumo"] is None  # confirma el hueco antes de guardar_csv
+
+    with pytest.raises(ValueError, match="'demanda interna consumo'"):
+        guardar_csv(df, tmp_path / "salida.csv", 2019)
+
+
+def test_guardar_csv_distingue_columna_ausente_de_celda_nan_en_la_misma_corrida(
+    tmp_path: Path,
+) -> None:
+    # ambos casos a la vez: encadenamiento_exportacion presente con un NaN puntual
+    # ("-"), encadenamiento_uso_final ausente por completo ("")
+    df = pd.DataFrame(
+        {
+            "generico": ["Soya"],
+            "encadenamiento exportacion": [float("nan")],
+        }
+    )
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2025)
+    leido = _leer(ruta)
+    assert leido.loc[0, "encadenamiento exportacion"] == "-"
+    assert leido.loc[0, "encadenamiento uso final"] == ""
+
+
+def test_guardar_csv_columna_extra_no_declarada_se_descarta(tmp_path: Path) -> None:
+    df = pd.DataFrame({"generico": ["Soya"], "columna_inventada": ["x"]})
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2019)
+    leido = _leer(ruta)
+    assert "columna_inventada" not in leido.columns
+
+
+def test_guardar_csv_columna_extra_advierte_sin_lanzar(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    df = pd.DataFrame({"generico": ["Soya"], "ponderdor": ["10.5"]})
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2019)  # no debe lanzar
+    salida = capsys.readouterr().out
+    assert "ponderdor" in salida
+
+
+def test_guardar_csv_preserva_orden_de_filas_y_columnas_multirregistro(tmp_path: Path) -> None:
+    df = pd.DataFrame(
+        {
+            "generico": ["soya", "frijol", "tortilla"],
+            "codigo": ["001", "002", "003"],
+            "sector": ["11 agricultura", "11 agricultura", "31 industrias"],
+        }
+    )
+    ruta = tmp_path / "salida.csv"
+    guardar_csv(df, ruta, 2019)
+    leido = _leer(ruta)
+    assert list(leido["generico"]) == ["soya", "frijol", "tortilla"]
+    assert list(leido["codigo"]) == ["001", "002", "003"]
+    assert (leido["produccion total"] == "").all()  # columna ausente en las 3 filas
