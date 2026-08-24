@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-# 2003 usa un esquema previo a SCIAN (P/GD/DIV/R/SG) -- diferido a v1.1.
 VersionCanastaScian = Literal[2012, 2019, 2025]
 
 COLUMNAS_BASE: tuple[str, ...] = (

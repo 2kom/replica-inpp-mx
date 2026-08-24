@@ -139,15 +139,13 @@ def guardar_csv(df: pd.DataFrame, ruta: Path, version: VersionCanastaScian) -> N
             # posición dentro del df (0-indexed), NO el índice de `df` --
             # decisión de diseño, no un descuido: `guardar_csv` reporta por
             # posición SIEMPRE, por contrato, sin importar qué índice traiga
-            # `df`. Hoy los 3 extractores (extraer_ponderadores/
-            # extraer_canasta/extraer_encadenamiento) siempre devuelven
-            # índice fresco -- `guardar_csv` no tiene todavía llamadores
-            # reales fuera de sus propios tests (`generar_canasta.py::main()`
-            # sigue en `NotImplementedError`), así que qué índice traerá tras
-            # un merge futuro es TODO, no una invariante ya verificada.
-            # Reportar por posición evita de raíz toda la clase de bugs de
-            # índice (etiquetas duplicadas rompiendo `.loc`, tipos numpy en
-            # el mensaje) sin depender de esa verificación futura.
+            # `df`. Los 3 extractores (extraer_ponderadores/extraer_canasta/
+            # extraer_encadenamiento) siempre devuelven índice fresco, y
+            # `df.merge(...)` (el llamador real en `generar_canasta.py::main()`)
+            # también resetea a un RangeIndex fresco -- pero reportar por
+            # posición evita de raíz toda la clase de bugs de índice (etiquetas
+            # duplicadas rompiendo `.loc`, tipos numpy en el mensaje) sin
+            # depender de esa invariante.
             posiciones = [pos for pos, es_nan in enumerate(mask) if es_nan]
             identificadores: list[object] = [
                 codigo_original.iloc[pos]

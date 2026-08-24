@@ -5,7 +5,6 @@ Extrae datos de archivos xlsx del INEGI y genera un archivo CSV intermedio
 (ponderadores_<version>.csv) para el pipeline de réplica del INPP.
 
 Uso:
-    python tools/generar_canasta.py --version 2003 --ponderadores ruta.xlsx -o salida/
     python tools/generar_canasta.py --version 2019 --ponderadores ruta.xlsx --canasta ruta.xlsx -o salida/
     python tools/generar_canasta.py --version 2025 --ponderadores ruta.xlsx --canasta ruta.xlsx \\
         --encadenamientos ruta.xlsx -o salida/
@@ -16,7 +15,7 @@ Ver: docs/requerimientos/explicacion.md (procedimiento de encadenamiento).
 import argparse
 from pathlib import Path
 
-VERSIONES = (2003, 2012, 2019, 2025)
+VERSIONES = (2012, 2019, 2025)
 
 # Única versión que trae su propio archivo de factor de encadenamiento
 # (docs/requerimientos/xlsx/2025/factor_de_encadenamiento_ti.xlsx) — ver
@@ -41,18 +40,14 @@ def parsear_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--ponderadores",
         type=Path,
         required=True,
-        help=(
-            "Ruta al xlsx con código SCIAN + ponderador por genérico "
-            "(en 2003 también trae el nombre completo del genérico)."
-        ),
+        help="Ruta al xlsx con código SCIAN + ponderador por genérico.",
     )
     parser.add_argument(
         "--canasta",
         type=Path,
         help=(
             "Opcional. Ruta al xlsx con el árbol SCIAN completo (nombres de "
-            "Sector/Subsector/Rama/Subrama/Clase) — no aplica a 2003, esa "
-            "versión ya trae el nombre del genérico en --ponderadores."
+            "Sector/Subsector/Rama/Subrama/Clase)."
         ),
     )
     parser.add_argument(
@@ -109,6 +104,41 @@ def _validar_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> 
         parser.error(f"-o debe ser un directorio: {args.salida}")
 
 
+def _validar_correspondencia(
+    nombre_flag: str, codigos_base: set[str], codigos_fuente: set[str]
+) -> None:
+    """Exige que `codigos_base` (de --ponderadores) y `codigos_fuente` sean el mismo conjunto.
+
+    Bidireccional a propósito: un left merge descarta en silencio los códigos que
+    sobran en `codigos_fuente` (no están en `codigos_base`), y deja en NaN los que
+    faltan -- ambos son señal de estar mezclando archivos de distinta versión.
+
+    Raises:
+        ValueError: con la cuenta y el listado de códigos en cada sentido.
+    """
+    faltantes = sorted(codigos_base - codigos_fuente)
+    sobrantes = sorted(codigos_fuente - codigos_base)
+    if not (faltantes or sobrantes):
+        return
+
+    detalle = []
+    if faltantes:
+        detalle.append(
+            f"{len(faltantes)} código(s) de --ponderadores sin correspondencia en "
+            f"--{nombre_flag}: {faltantes}"
+        )
+    if sobrantes:
+        detalle.append(
+            f"{len(sobrantes)} código(s) de --{nombre_flag} sin correspondencia en "
+            f"--ponderadores: {sobrantes}"
+        )
+    raise ValueError(
+        f"Códigos inconsistentes entre --ponderadores y --{nombre_flag} -- "
+        + "; ".join(detalle)
+        + f". ¿--{nombre_flag} es de la misma versión que --ponderadores?"
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """Punto de entrada del CLI: parsea args, extrae, cruza y guarda el CSV.
 
@@ -139,12 +169,18 @@ def main(argv: list[str] | None = None) -> None:
             # correspondencia SCIAN 2013-2007 de INEGI (fusión de 113+114 hacia 113).
             df["codigo"] = df["codigo"].replace({"114": "113"})
         df_canasta = extraer_canasta(args.canasta, args.version)
+        _validar_correspondencia("canasta", set(df["codigo"]), set(df_canasta["codigo"]))
         columnas_jerarquia = ["generico", "sector", "subsector", "rama", "subrama", "clase"]
-        df = df.drop(columns=columnas_jerarquia).merge(df_canasta, on="codigo", how="left")
+        df = df.drop(columns=columnas_jerarquia).merge(
+            df_canasta, on="codigo", how="left", validate="one_to_one"
+        )
 
     if args.encadenamientos is not None:
         df_encadenamiento = extraer_encadenamiento(args.encadenamientos)
-        df = df.merge(df_encadenamiento, on="codigo", how="left")
+        _validar_correspondencia(
+            "encadenamientos", set(df["codigo"]), set(df_encadenamiento["codigo"])
+        )
+        df = df.merge(df_encadenamiento, on="codigo", how="left", validate="one_to_one")
 
     df = resolver_sector_agrupado(df)
     df = normalizar_columnas_con_codigo(df, ["sector", "subsector", "rama", "subrama", "clase"])

@@ -203,17 +203,6 @@ def test_columnas_de_encadenamiento_son_pares_consecutivos() -> None:
     assert columnas == list(range(8, 15, 2))
 
 
-# -- 2003 queda fuera de este módulo, a propósito ---------------------------
-
-
-def test_2003_no_esta_en_layouts_xlsx() -> None:
-    # 2003 usa P/GD/DIV/R/SG/G-03 (previo a SCIAN), no un layout más de este
-    # módulo -- VersionCanastaScian ya lo excluye por tipo, esto confirma que
-    # tampoco se cuela en tiempo de ejecución (ej. por un typo al ampliar el
-    # dict a mano). Diferido a v1.1 -- requiere PDF además de xlsx.
-    assert 2003 not in LAYOUTS_XLSX
-
-
 # ============================================================================
 # -- LAYOUTS_XLSX contra los xlsx reales de INEGI ---------------------------
 # ============================================================================
@@ -233,16 +222,16 @@ def test_2003_no_esta_en_layouts_xlsx() -> None:
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _RUTAS_PONDERADORES: dict[VersionCanastaScian, Path] = {
-    2012: _REPO_ROOT / "data/tests/xlsx/2012/ponderadores_inpp_inegi_2012.xlsx",
+    2012: _REPO_ROOT / "data/tests/2012/ponderadores_inpp_inegi_2012.xlsx",
     2019: _REPO_ROOT
-    / "data/tests/xlsx/2019"
+    / "data/tests/2019"
     / "COU_2017_Estructura_de_ponderaciones_PR_Julio_2019_2_Agosto_2019.xlsx",
-    2025: _REPO_ROOT / "data/tests/xlsx/2025/ponderadores_inpp_2025.xlsx",
+    2025: _REPO_ROOT / "data/tests/2025/ponderadores_inpp_2025.xlsx",
 }
 
 # el archivo de encadenamiento solo existe para 2025 -- ver esquema.py y
 # docs/requerimientos/explicacion_encadenamiento.md
-_RUTA_ENCADENAMIENTO = _REPO_ROOT / "data/tests/xlsx/2025/factor_de_encadenamiento_ti.xlsx"
+_RUTA_ENCADENAMIENTO = _REPO_ROOT / "data/tests/2025/factor_de_encadenamiento_ti.xlsx"
 
 _RUTAS_TODAS = [*_RUTAS_PONDERADORES.values(), _RUTA_ENCADENAMIENTO]
 _FALTANTES = [str(r) for r in _RUTAS_TODAS if not r.exists()]

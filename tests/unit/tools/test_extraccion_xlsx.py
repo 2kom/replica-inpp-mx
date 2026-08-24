@@ -728,24 +728,24 @@ def test_extraer_canasta_2025_une_codigo_y_nombre_por_nivel(tmp_path: Path) -> N
 # en particular el cruce de códigos contra `extraer_ponderadores` (misma
 # canasta, mismo universo de genéricos, deberían compartir join key).
 #
-# requires_data: los xlsx viven en data/tests/xlsx/ (gitignoreado). Mismo
+# requires_data: los xlsx viven en data/tests/ (gitignoreado). Mismo
 # criterio de skip a nivel de clase que TestContraXlsxReales en
 # test_esquema.py.
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
 _RUTAS_CANASTA: dict[VersionCanastaScian, Path] = {
-    2012: _REPO_ROOT / "data/tests/xlsx/2012/canasta.xlsx",
-    2019: _REPO_ROOT / "data/tests/xlsx/2019/Canasta_de_Genericos_CAB_INPP_2019.xlsx",
-    2025: _REPO_ROOT / "data/tests/xlsx/2025/canasta_inpp_2025.xlsx",
+    2012: _REPO_ROOT / "data/tests/2012/canasta.xlsx",
+    2019: _REPO_ROOT / "data/tests/2019/Canasta_de_Genericos_CAB_INPP_2019.xlsx",
+    2025: _REPO_ROOT / "data/tests/2025/canasta_inpp_2025.xlsx",
 }
 
 _RUTAS_PONDERADORES_REALES: dict[VersionCanastaScian, Path] = {
-    2012: _REPO_ROOT / "data/tests/xlsx/2012/ponderadores_inpp_inegi_2012.xlsx",
+    2012: _REPO_ROOT / "data/tests/2012/ponderadores_inpp_inegi_2012.xlsx",
     2019: _REPO_ROOT
-    / "data/tests/xlsx/2019"
+    / "data/tests/2019"
     / "COU_2017_Estructura_de_ponderaciones_PR_Julio_2019_2_Agosto_2019.xlsx",
-    2025: _REPO_ROOT / "data/tests/xlsx/2025/ponderadores_inpp_2025.xlsx",
+    2025: _REPO_ROOT / "data/tests/2025/ponderadores_inpp_2025.xlsx",
 }
 
 _RUTAS_TODAS_CANASTA = [*_RUTAS_CANASTA.values(), *_RUTAS_PONDERADORES_REALES.values()]
@@ -957,7 +957,7 @@ def test_extraer_encadenamiento_rechaza_codigos_duplicados(tmp_path: Path) -> No
 # -- extraer_encadenamiento contra el xlsx real de INEGI (solo 2025) --------
 # ============================================================================
 
-_RUTA_ENCADENAMIENTO_REAL = _REPO_ROOT / "data/tests/xlsx/2025/factor_de_encadenamiento_ti.xlsx"
+_RUTA_ENCADENAMIENTO_REAL = _REPO_ROOT / "data/tests/2025/factor_de_encadenamiento_ti.xlsx"
 _MOTIVO_SKIP_ENCADENAMIENTO = (
     f"falta xlsx real (data/tests gitignoreado): {_RUTA_ENCADENAMIENTO_REAL}"
     if not _RUTA_ENCADENAMIENTO_REAL.exists()

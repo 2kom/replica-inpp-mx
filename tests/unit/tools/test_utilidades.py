@@ -387,13 +387,11 @@ def test_guardar_csv_lanza_valueerror_si_encadenamiento_total_o_produccion_nacio
 # Decisión de diseño: reportar POSICIÓN dentro del df (0-indexed) SIEMPRE, por
 # contrato, nunca el índice de `df` -- sin importar qué índice traiga `df`.
 # Los 3 extractores actuales (extraer_ponderadores/extraer_canasta/
-# extraer_encadenamiento) siempre devuelven índice fresco -- `guardar_csv` no
-# tiene todavía llamadores reales fuera de estos tests
-# (`generar_canasta.py::main()` sigue en `NotImplementedError`), así que qué
-# índice traerá tras un merge futuro es TODO, no una invariante ya verificada.
-# Ignorar el índice de raíz evita toda la clase de bugs de índice (etiquetas
-# duplicadas rompiendo `.loc`, tipos numpy en el mensaje) sin depender de esa
-# verificación futura. Ver negociación
+# extraer_encadenamiento) siempre devuelven índice fresco, y `df.merge(...)`
+# (el llamador real en `generar_canasta.py::main()`) también resetea a un
+# RangeIndex fresco -- pero reportar por posición evita toda la clase de bugs
+# de índice (etiquetas duplicadas rompiendo `.loc`, tipos numpy en el mensaje)
+# sin depender de esa invariante. Ver negociación
 # data/negociaciones/2026-08-22-utilidades-normalizacion-scian.md § "Seguimiento 10".
 
 
