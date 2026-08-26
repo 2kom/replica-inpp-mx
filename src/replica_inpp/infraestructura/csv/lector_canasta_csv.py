@@ -15,6 +15,8 @@ from replica_inpp.dominio.errores import (
     ColumnasMinFaltantes,
     EncodingNoLegible,
 )
+from replica_inpp.dominio.modelos.canasta import CanastaINPP
+from replica_inpp.dominio.tipos import VersionCanasta
 
 # Columnas esperadas tras fijar `codigo` como índice. Lista propia de esta capa,
 # independiente de `tools/canasta_inpp/esquema.py::COLUMNAS_BASE` (ese esquema
@@ -53,7 +55,7 @@ _PATRON_BARE = re.compile(r"^\d+$")
 
 
 class LectorCanastaCsv:
-    def leer(self, ruta: Path) -> pd.DataFrame:
+    def leer(self, ruta: Path, version: VersionCanasta) -> CanastaINPP:
         try:
             canasta = pd.read_csv(
                 ruta,
@@ -80,7 +82,7 @@ class LectorCanastaCsv:
         canasta = self._separar_codigo_jerarquia(canasta, ruta)
 
         canasta.attrs["origen"] = ruta
-        return canasta
+        return CanastaINPP(canasta, version)
 
     def _separar_codigo_jerarquia(self, canasta: pd.DataFrame, ruta: Path) -> pd.DataFrame:
         """Agrega `codigo <nivel>` a la izquierda de cada columna en

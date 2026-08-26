@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -8,10 +9,40 @@ import pytest
 import replica_inpp as rep
 from replica_inpp.api import insumos
 from replica_inpp.dominio.errores import ArchivoCorrupto, InvarianteViolado, VersionNoCoincide
+from replica_inpp.dominio.modelos.canasta import CanastaINPP
 from replica_inpp.dominio.modelos.serie import SerieNormalizada
 from replica_inpp.dominio.periodos import PeriodoMensual
 
 DATA_DIR = Path(__file__).parent.parent.parent.parent / "data" / "inputs"
+
+
+def _canasta_dummy() -> CanastaINPP:
+    columnas: dict[str, list[Any]] = {
+        "generico": ["soya"],
+        "codigo sector": ["11"],
+        "sector": ["11 agricultura"],
+        "codigo subsector": ["111"],
+        "subsector": ["111 agricultura"],
+        "codigo rama": ["1111"],
+        "rama": ["1111 cultivo"],
+        "codigo subrama": ["11111"],
+        "subrama": ["11111 cultivo de soya"],
+        "codigo clase": ["111110"],
+        "clase": ["111110 cultivo de soya"],
+        "produccion total": [100.0],
+        "bienes intermedios": [100.0],
+        "bienes finales": [100.0],
+        "demanda interna total": [100.0],
+        "demanda interna consumo": [100.0],
+        "demanda interna capital": [100.0],
+        "exportaciones": [100.0],
+        "encadenamiento total": [None],
+        "encadenamiento produccion nacional": [None],
+        "encadenamiento exportacion": [None],
+        "encadenamiento uso final": [None],
+    }
+    df = pd.DataFrame(columnas, index=pd.Index(["001"], name="codigo"))
+    return CanastaINPP(df, version=2019)
 
 
 def _df_lector(
@@ -176,3 +207,127 @@ def test_cargar_serie_bases_mezcladas_en_el_archivo_falla(tmp_path: Path) -> Non
 
     with pytest.raises(ArchivoCorrupto):
         rep.cargar_serie(str(ruta), 2019)
+
+
+# -- cargar_canasta: validación de versión -----------------------------------
+
+
+@pytest.mark.parametrize("version", [2010, 2013, 2018, 2024, 0, 9999])
+def test_cargar_canasta_version_invalida(version: int) -> None:
+    with pytest.raises(InvarianteViolado):
+        insumos.cargar_canasta("x.csv", version)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("version", [2012, 2019, 2025])
+def test_cargar_canasta_version_valida_no_falla_por_version(mocker, version: int) -> None:
+    lector = mocker.patch.object(insumos, "LectorCanastaCsv")
+    lector.return_value.leer.return_value = _canasta_dummy()
+
+    resultado = insumos.cargar_canasta("x.csv", version)  # type: ignore[arg-type]
+
+    assert isinstance(resultado, CanastaINPP)
+
+
+# -- cargar_canasta: delegación al lector ------------------------------------
+
+
+def test_cargar_canasta_delega_al_lector_con_path_y_version(mocker) -> None:
+    lector = mocker.patch.object(insumos, "LectorCanastaCsv")
+    leer = lector.return_value.leer
+    leer.return_value = _canasta_dummy()
+
+    insumos.cargar_canasta("data/c.csv", 2019)
+
+    leer.assert_called_once_with(Path("data/c.csv"), 2019)
+
+
+def test_cargar_canasta_devuelve_lo_que_retorna_el_lector(mocker) -> None:
+    lector = mocker.patch.object(insumos, "LectorCanastaCsv")
+    esperado = _canasta_dummy()
+    lector.return_value.leer.return_value = esperado
+
+    resultado = insumos.cargar_canasta("x.csv", 2019)
+
+    assert resultado is esperado
+
+
+# -- cargar_canasta: invariante de índice a través de la API pública ---------
+# (negociación 2026-08-26: codigo ausente se colaba como índice "nan")
+
+
+def test_cargar_canasta_codigo_ausente_falla_via_api_publica(tmp_path: Path) -> None:
+    columnas_peso = [
+        "produccion total",
+        "bienes intermedios",
+        "bienes finales",
+        "demanda interna total",
+        "demanda interna consumo",
+        "demanda interna capital",
+        "exportaciones",
+    ]
+    df = pd.DataFrame(
+        {
+            "codigo": ["", "002"],
+            "generico": ["soya", "frijol"],
+            "sector": ["11 agricultura", "11 agricultura"],
+            "subsector": ["111 agricultura", "111 agricultura"],
+            "rama": ["1111 cultivo", "1111 cultivo"],
+            "subrama": ["11111 cultivo de soya", "11111 cultivo de soya"],
+            "clase": ["111110 cultivo de soya", "111131 cultivo de frijol"],
+            **{col: [50.0, 50.0] for col in columnas_peso},
+            "encadenamiento total": [None, None],
+            "encadenamiento produccion nacional": [None, None],
+            "encadenamiento exportacion": [None, None],
+            "encadenamiento uso final": [None, None],
+        }
+    )
+    ruta = tmp_path / "codigo_ausente.csv"
+    df.to_csv(ruta, index=False)
+
+    with pytest.raises(InvarianteViolado):
+        insumos.cargar_canasta(str(ruta), 2019)
+
+
+# -- cargar_canasta: fachada pública ------------------------------------------
+
+
+def test_cargar_canasta_esta_en_all_de_la_fachada() -> None:
+    assert "cargar_canasta" in rep.__all__
+
+
+def test_rep_cargar_canasta_es_la_misma_funcion_que_insumos_cargar_canasta() -> None:
+    assert rep.cargar_canasta is insumos.cargar_canasta
+
+
+def test_rep_cargar_canasta_funciona_con_lector_controlado(mocker) -> None:
+    lector = mocker.patch.object(insumos, "LectorCanastaCsv")
+    esperado = _canasta_dummy()
+    lector.return_value.leer.return_value = esperado
+
+    resultado = rep.cargar_canasta("x.csv", 2019)
+
+    assert resultado is esperado
+
+
+# -- cargar_canasta: cruce real contra datos reales ---------------------------
+
+
+@pytest.mark.requires_data
+@pytest.mark.parametrize(
+    "carpeta,version,filas_esperadas",
+    [
+        ("canasta", 2012, 567),
+        ("canasta", 2019, 560),
+        ("canasta", 2025, 570),
+        ("ponderadores", 2012, 567),
+        ("ponderadores", 2019, 560),
+        ("ponderadores", 2025, 570),
+    ],
+)
+def test_cargar_canasta_real(carpeta: str, version: int, filas_esperadas: int) -> None:
+    ruta = DATA_DIR / carpeta / f"ponderadores_{version}.csv"
+    resultado = insumos.cargar_canasta(str(ruta), version)  # type: ignore[arg-type]
+
+    assert isinstance(resultado, CanastaINPP)
+    assert resultado.version == version
+    assert len(resultado.df) == filas_esperadas
