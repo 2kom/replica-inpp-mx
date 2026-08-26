@@ -11,8 +11,6 @@ Uso:
     python tools/generar_canasta.py --version 2019 --ponderadores ruta.xlsx --canasta ruta.xlsx -o salida/
     python tools/generar_canasta.py --version 2025 --ponderadores ruta.xlsx --canasta ruta.xlsx \\
         --encadenamientos ruta.xlsx -o salida/
-
-Ver: docs/requerimientos/explicacion.md (procedimiento de encadenamiento).
 """
 
 import argparse
@@ -21,8 +19,6 @@ from pathlib import Path
 VERSIONES = (2012, 2019, 2025)
 
 # Única versión que trae su propio archivo de factor de encadenamiento
-# (docs/requerimientos/xlsx/2025/factor_de_encadenamiento_ti.xlsx) — ver
-# docs/requerimientos/explicacion.md §5.
 VERSION_ENCADENAMIENTO_OBLIGATORIO = 2025
 
 
@@ -166,9 +162,12 @@ def main(argv: list[str] | None = None) -> None:
 
     df = extraer_ponderadores(args.ponderadores, args.version)
 
+    if args.version == 2019:
+        df["codigo"] = df["codigo"].replace({"114": "113"})
+
     if args.canasta is not None:
         if args.version == 2019:
-            # discrepancia real de fuente: "Chocolate en tableta y en polvo" es 113 en
+            # discrepancia de fuente: "Chocolate en tableta y en polvo" es 113 en
             # --canasta pero 114 en --ponderadores -- confirmado con la Tabla de
             # correspondencia SCIAN 2013-2007 de INEGI (fusión de 113+114 hacia 113).
             df["codigo"] = df["codigo"].replace({"114": "113"})
