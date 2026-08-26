@@ -97,9 +97,14 @@ def guardar_csv(df: pd.DataFrame, ruta: Path, version: VersionCanastaScian) -> N
 
     Distingue 3 semánticas de "sin valor": valor real (incluido cero, se preserva tal
     cual), columna entera ausente en `df` (se rellena con `""`), y celda `NaN` dentro
-    de una columna presente (`"-"` si la columna está en
+    de una columna presente (`"N/A"` si la columna está en
     `COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO`, `ValueError` en cualquier otra columna --
-    ver Raises).
+    ver Raises). `"N/A"` y no `"-"` a propósito -- `"-"` en INPC representa
+    "no pertenece" (categoría binaria), significado distinto a "sin valor"; usar el
+    mismo símbolo acá para un significado distinto sería inconsistente. `"N/A"` además
+    ya está en la lista default de NA de pandas (`pd.io.parsers.readers.STR_NA_VALUES`)
+    y es el mismo literal que ya trae el xlsx fuente (ver `extraer_encadenamiento`) --
+    ida y vuelta sin marcador propio ni mapeo manual del lado del lector.
 
     Args:
         df: Datos a guardar. Puede traer un subconjunto de `COLUMNAS_BASE`; las
@@ -162,6 +167,6 @@ def guardar_csv(df: pd.DataFrame, ruta: Path, version: VersionCanastaScian) -> N
             )
 
     for columna in COLUMNAS_ENCADENAMIENTO_NA_PERMITIDO:
-        df[columna] = df[columna].fillna("-")
+        df[columna] = df[columna].fillna("N/A")
 
     df.to_csv(ruta, index=False)

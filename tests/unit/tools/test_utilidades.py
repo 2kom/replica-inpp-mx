@@ -306,7 +306,7 @@ def test_guardar_csv_preserva_string_exacto_de_ponderador(tmp_path: Path) -> Non
     assert leido.loc[0, "produccion total"] == "3.0944225043218539E-2"
 
 
-def test_guardar_csv_celda_nan_en_columna_presente_se_guarda_como_guion(tmp_path: Path) -> None:
+def test_guardar_csv_celda_nan_en_columna_presente_se_guarda_como_n_a(tmp_path: Path) -> None:
     # "N/A" de INEGI en encadenamiento_exportacion, ya convertido a NaN por
     # extraer_encadenamiento -- celda puntual sin dato, no columna ausente
     df = pd.DataFrame(
@@ -319,7 +319,7 @@ def test_guardar_csv_celda_nan_en_columna_presente_se_guarda_como_guion(tmp_path
     guardar_csv(df, ruta, 2025)
     leido = _leer(ruta)
     assert leido.loc[0, "encadenamiento exportacion"] == "1.416519"
-    assert leido.loc[1, "encadenamiento exportacion"] == "-"
+    assert leido.loc[1, "encadenamiento exportacion"] == "N/A"
 
 
 def test_guardar_csv_lanza_valueerror_si_ponderador_tiene_nan() -> None:
@@ -362,8 +362,8 @@ def test_guardar_csv_no_lanza_si_solo_columnas_de_encadenamiento_tienen_nan(
     ruta = tmp_path / "salida.csv"
     guardar_csv(df, ruta, 2025)  # no debe lanzar
     leido = _leer(ruta)
-    assert leido.loc[0, "encadenamiento exportacion"] == "-"
-    assert leido.loc[0, "encadenamiento uso final"] == "-"
+    assert leido.loc[0, "encadenamiento exportacion"] == "N/A"
+    assert leido.loc[0, "encadenamiento uso final"] == "N/A"
 
 
 # -- guardar_csv: encadenamiento total/produccion nacional NUNCA admiten N/A -
@@ -488,7 +488,7 @@ def test_guardar_csv_distingue_columna_ausente_de_celda_nan_en_la_misma_corrida(
     tmp_path: Path,
 ) -> None:
     # ambos casos a la vez: encadenamiento_exportacion presente con un NaN puntual
-    # ("-"), encadenamiento_uso_final ausente por completo ("")
+    # ("N/A"), encadenamiento_uso_final ausente por completo ("")
     df = pd.DataFrame(
         {
             "generico": ["Soya"],
@@ -498,7 +498,7 @@ def test_guardar_csv_distingue_columna_ausente_de_celda_nan_en_la_misma_corrida(
     ruta = tmp_path / "salida.csv"
     guardar_csv(df, ruta, 2025)
     leido = _leer(ruta)
-    assert leido.loc[0, "encadenamiento exportacion"] == "-"
+    assert leido.loc[0, "encadenamiento exportacion"] == "N/A"
     assert leido.loc[0, "encadenamiento uso final"] == ""
 
 
