@@ -12,7 +12,7 @@ from types import ModuleType
 from replica_inpp.api import config as _config
 from replica_inpp.api.config import limpiar_cache, mostrar_config, reset_config, set_token
 from replica_inpp.api.consultas import consultar_indice
-from replica_inpp.api.insumos import cargar_serie
+from replica_inpp.api.insumos import cargar_canasta, cargar_serie
 from replica_inpp.dominio.errores import (
     ArchivoCorrupto,
     ArchivoNoEncontrado,
@@ -53,6 +53,7 @@ __all__ = [
     "reset_config",
     "set_token",
     # insumos
+    "cargar_canasta",
     "cargar_serie",
     # consultas INEGI
     "consultar_indice",

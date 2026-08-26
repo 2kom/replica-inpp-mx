@@ -1,11 +1,14 @@
-"""IO de insumos: carga de series desde CSV."""
+"""IO de insumos: carga de series y canasta desde CSV."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from replica_inpp.dominio.errores import InvarianteViolado, VersionNoCoincide
 from replica_inpp.dominio.modelos.serie import SerieNormalizada
+from replica_inpp.infraestructura.csv.lector_canasta_csv import LectorCanastaCsv
 from replica_inpp.infraestructura.csv.lector_series_csv import LectorSeriesCsv
 
 _VERSIONES_VALIDAS = (2012, 2019, 2025)
@@ -62,3 +65,33 @@ def cargar_serie(ruta: str, version: int) -> SerieNormalizada:
 
     df.attrs["version"] = version
     return SerieNormalizada(df, recorte=df.attrs["recorte"])
+
+
+def cargar_canasta(ruta: str, version: int) -> pd.DataFrame:
+    """Carga la canasta de ponderadores del INPP desde el CSV generado por
+    `tools/generar_canasta.py`.
+
+    Versión rudimentaria: todavía no arma un `CanastaINPP` de dominio, devuelve
+    el DataFrame crudo (índice `codigo`, columna decorativa `generico`, 7
+    columnas de peso — una por recorte — y 4 de encadenamiento, estas últimas
+    en `NaN` si el CSV se generó sin `--encadenamientos`).
+
+    `version` solo se valida contra el conjunto soportado (2012, 2019, 2025) —
+    a diferencia de `cargar_serie`, todavía no se contrasta contra ninguna
+    marca dentro del propio archivo (el CSV de canasta no trae una).
+
+    Args:
+        ruta: CSV de canasta con columna `codigo` como índice, más
+            `COLUMNAS_REQUERIDAS` (`infraestructura.csv.lector_canasta_csv`).
+        version: 2012, 2019 o 2025.
+
+    Raises:
+        InvarianteViolado: la versión no es una de las tres válidas.
+        ArchivoNoEncontrado: la ruta no existe.
+        ArchivoVacio: el CSV no tiene contenido.
+        ArchivoCorrupto: el CSV no se puede parsear.
+        EncodingNoLegible: el archivo no es legible con los encodings soportados.
+        ColumnasMinFaltantes: falta alguna columna requerida.
+    """
+    _validar_version(version)
+    return LectorCanastaCsv().leer(Path(ruta))
