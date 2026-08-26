@@ -20,11 +20,15 @@ from replica_inpp.dominio.tipos import RECORTE_POR_PREFIJO, RecorteINPP
 from replica_inpp.infraestructura.csv._utils import _normalizar
 
 # Fila plana: ", <1 dígito recorte><3 dígitos código> <nombre>" al final del Título.
-# Confirmado 100% en nae de las 4 carpetas × s12/s19/s25 — ver CLAUDE.md.
+# Confirmado 100% en nae de las 4 carpetas × s12/s19/s25, cero excepciones.
 _PATRON_PLANO = re.compile(r",\s*(\d)(\d{3})\s+(.+)$")
 
 # Fila hoja de un archivo jerárquico (`ae`): código de 3 dígitos SIN prefijo de recorte.
 _PATRON_HOJA = re.compile(r"^(\d{3})\s+(.+)$")
+
+# "Base <mes> <AAAA>=100" al inicio del Título -- el año de la base coincide con la
+# versión de canasta (2012/2019/2025), verificado contra los xlsx/CSV reales.
+_PATRON_BASE = re.compile(r"Base\s+\w+\s+(\d{4})=100")
 
 # Huérfano conocido de origen en `ae` de produccion_total (verificado s19): la fila
 # "...621511 Laboratorios médicos y de diagnóstico del sector privado, 622 Hospitales"
@@ -58,6 +62,8 @@ class LectorSeriesCsv:
                 "'Serie' y 'Cifra' como columnas o filas"
             )
 
+        version_detectada = self._detectar_version(data.index)
+
         extracciones, recorte = self._extraer(data)
         if not extracciones:
             raise SerieVacia("Error al procesar serie, no se encontraron genéricos en el título")
@@ -67,12 +73,27 @@ class LectorSeriesCsv:
         codigos, nombres, valores = zip(*extracciones)
 
         df_serie = pd.DataFrame(valores, columns=data.columns).apply(pd.to_numeric, errors="coerce")
-        df_serie.index = pd.MultiIndex.from_arrays([codigos, nombres], names=["codigo", "nombre"])
+        df_serie.index = pd.Index(codigos, name="codigo")
         df_serie.columns = periodos
+        df_serie.insert(0, "generico", nombres)
         df_serie.attrs["origen"] = ruta
         df_serie.attrs["recorte"] = recorte
+        df_serie.attrs["version_detectada"] = version_detectada
 
         return df_serie
+
+    def _detectar_version(self, titulos: pd.Index) -> int | None:
+        """Extrae el año de "Base <mes> <AAAA>=100" de TODOS los títulos -- coincide
+        con la versión de canasta. `None` si ningún título trae ese patrón (no
+        debería pasar con un archivo real del BIE).
+
+        Raises:
+            ArchivoCorrupto: los títulos traen más de un año de base distinto.
+        """
+        años = {int(m.group(1)) for t in titulos if (m := _PATRON_BASE.search(str(t)))}
+        if len(años) > 1:
+            raise ArchivoCorrupto(f"El archivo mezcla más de una base de versión: {sorted(años)}")
+        return años.pop() if años else None
 
     def _leer_csv(self, ruta: Path) -> pd.DataFrame:
         for encoding in ["utf-8", "cp1252"]:
@@ -197,6 +218,6 @@ class LectorSeriesCsv:
                 continue
             extracciones.append((codigo, _normalizar(nombre), data.iloc[pos]))
 
-        # `ae`/`nae` solo existe como variante en produccion_total (ver CLAUDE.md) —
-        # si se llegó a este camino, el recorte es ese, sin ambigüedad.
+        # `ae`/`nae` solo existe como variante en produccion_total — si se llegó a
+        # este camino, el recorte es ese, sin ambigüedad.
         return extracciones, "produccion_total"

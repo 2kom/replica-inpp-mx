@@ -22,11 +22,11 @@ from replica_inpp.infraestructura.inegi.fuente_validacion_api import (
 
 _TIPO = "PRODUCCION TOTAL"
 
-# Catálogo transcrito a mano desde docs/requerimientos/indicadores_bie_inpp.md (Ruta B),
-# independiente del dict productor `_INDICADORES` — si alguien borra o renombra una
-# entrada ahí por accidente, TestCatalogo lo detecta contra esta fuente aparte. Usar
-# `len(_INDICADORES[_TIPO])` como "cantidad esperada" no serviría: productor y esperado
-# encogerían juntos.
+# Catálogo transcrito a mano (Ruta B), independiente del dict productor
+# `_INDICADORES` — si alguien borra o renombra una entrada ahí por accidente,
+# TestCatalogo lo detecta contra esta fuente aparte. Usar
+# `len(_INDICADORES[_TIPO])` como "cantidad esperada" no serviría: productor y
+# esperado encogerían juntos.
 _CATALOGO_ESPERADO: dict[str, str] = {
     "INPP sin Petróleo y con Servicios": "910491",
     "INPP con Petróleo y con Servicios": "1700002",

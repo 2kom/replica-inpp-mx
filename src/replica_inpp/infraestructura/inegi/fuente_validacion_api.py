@@ -12,8 +12,7 @@ from replica_inpp.dominio.errores import (
 )
 from replica_inpp.dominio.periodos import PeriodoMensual
 
-# IDs BIE — ver docs/requerimientos/indicadores_bie_inpp.md para procedencia,
-# verificación y notas. Conjunto "Ruta B" (superconjunto verificado contra API real).
+# IDs BIE — conjunto "Ruta B" (superconjunto verificado contra API real).
 _INDICADORES: dict[str, dict[str, str]] = {
     "PRODUCCION TOTAL": {
         "INPP sin Petróleo y con Servicios": "910491",
@@ -107,8 +106,7 @@ class FuenteValidacionApi:
     """Implementa `FuenteValidacion` sobre la API del BIE del INEGI.
 
     Por ahora solo índices de nivel — variaciones e incidencias se agregan
-    cuando haya IDs BIE confirmados (ver
-    `docs/requerimientos/indicadores_bie_inpp.md`).
+    cuando haya IDs BIE confirmados.
     """
 
     _cache: dict[str, dict[PeriodoMensual, float | None]] = {}

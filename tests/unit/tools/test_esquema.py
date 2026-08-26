@@ -214,8 +214,8 @@ def test_columnas_de_encadenamiento_son_pares_consecutivos() -> None:
 # posiciones de LAYOUTS_XLSX describen la realidad del archivo fuente, no
 # solo la memoria congelada de esquema.py.
 #
-# requires_data: los xlsx viven en docs/requerimientos/ (gitignoreado, no
-# se descargan con el checkout). openpyxl vive en el extra "ponderadores".
+# requires_data: los xlsx están gitignoreados, no se descargan con el
+# checkout. openpyxl vive en el extra "ponderadores".
 # Ninguna de las 2 ausencias debe romper los tests de arriba -- por eso el
 # skip está a nivel de clase (pytestmark), no de módulo.
 
@@ -229,8 +229,7 @@ _RUTAS_PONDERADORES: dict[VersionCanastaScian, Path] = {
     2025: _REPO_ROOT / "data/tests/2025/ponderadores_inpp_2025.xlsx",
 }
 
-# el archivo de encadenamiento solo existe para 2025 -- ver esquema.py y
-# docs/requerimientos/explicacion_encadenamiento.md
+# el archivo de encadenamiento solo existe para 2025 -- ver esquema.py
 _RUTA_ENCADENAMIENTO = _REPO_ROOT / "data/tests/2025/factor_de_encadenamiento_ti.xlsx"
 
 _RUTAS_TODAS = [*_RUTAS_PONDERADORES.values(), _RUTA_ENCADENAMIENTO]

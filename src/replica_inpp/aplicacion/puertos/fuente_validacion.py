@@ -11,7 +11,7 @@ class FuenteValidacion(Protocol):
     Por ahora cubre solo niveles de índice — el INPP se publica únicamente mensual
     (no hay eje quincenal como en el INPC), por lo que `PeriodoMensual` es el único
     tipo de periodo. `variaciones`/`incidencias` se agregan cuando haya IDs BIE
-    confirmados para ellas (ver `docs/requerimientos/indicadores_bie_inpp.md`).
+    confirmados para ellas.
 
     El `tipo` (p. ej. `"PRODUCCION TOTAL"`) se fija en el constructor del
     implementador, no en el método — mismo patrón que `replica-inpc-mx`.

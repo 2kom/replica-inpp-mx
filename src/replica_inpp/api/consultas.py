@@ -33,9 +33,7 @@ def consultar_indice(tipo: str) -> pd.DataFrame:
     `replica-inpc-mx`, acá no hay parámetro `periodicidad`.
 
     Args:
-        tipo: se normaliza con `.upper()`. Valores soportados: ver
-            `docs/requerimientos/indicadores_bie_inpp.md`. Por ahora solo
-            `"PRODUCCION TOTAL"`.
+        tipo: se normaliza con `.upper()`. Por ahora solo `"PRODUCCION TOTAL"`.
 
     Raises:
         ErrorConfiguracion: `tipo` sin indicador INEGI, o no hay token
