@@ -121,7 +121,12 @@ def test_columna_encadenamiento_por_recorte_cubre_los_4_recortes() -> None:
 
 
 def test_sectores_mercancias_contenido_exacto() -> None:
-    assert SECTORES_MERCANCIAS == {"11", "21", "22", "23", "31-33"}
+    # "31-33" (combinado) NUNCA aparece en `codigo sector` real -- la canasta ya
+    # trae 31/32/33 resueltos por separado (`resolver_sector_agrupado`). Ver
+    # comentario de `SECTORES_MERCANCIAS` en tipos.py: con "31-33" el grupo
+    # "Mercancías" perdía TODO el peso de manufacturas (20.98 en vez de 66.46585,
+    # bug encontrado comparando contra INEGI con datos reales de 2019).
+    assert SECTORES_MERCANCIAS == {"11", "21", "22", "23", "31", "32", "33"}
 
 
 # -- CODIGO_PETROLEO_CRUDO --

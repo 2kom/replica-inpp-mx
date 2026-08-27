@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -15,11 +15,18 @@ class Vista:
     Args:
         df: DataFrame con MultiIndex de 2 niveles `(periodo, indice)`.
         columnas: columna(s) de `df` a exponer en `.ancho` — pivotea por `periodo`.
+        nombres: nombre legible por valor de `indice`, opcional. Si se da, `.ancho`
+            lo agrega como última columna (a la derecha, sin tocar el índice). Si
+            es `None`, `.ancho` no trae columna de nombre — no hay nombre real que
+            mostrar (ver `ResultadoIndice.resultado`).
     """
 
-    def __init__(self, df: pd.DataFrame, columnas: list[str]) -> None:
+    def __init__(
+        self, df: pd.DataFrame, columnas: list[str], nombres: pd.Series | None = None
+    ) -> None:
         self._df = df
         self._columnas = columnas
+        self._nombres = nombres
 
     @property
     def largo(self) -> pd.DataFrame:
@@ -30,9 +37,21 @@ class Vista:
     def ancho(self) -> pd.DataFrame:
         """Pivotea `columnas` por `periodo`: filas=`indice` si 1 columna, MultiIndex `(indice, metrica)` si N."""
         if len(self._columnas) == 1:
-            return self._df[self._columnas[0]].unstack("periodo")
-        sub = self._df[self._columnas].rename_axis(columns="metrica")
-        return sub.stack(future_stack=True).unstack("periodo")  # type: ignore
+            resultado = cast(pd.DataFrame, self._df[self._columnas[0]].unstack("periodo"))
+        else:
+            sub = self._df[self._columnas].rename_axis(columns="metrica")
+            resultado = cast(pd.DataFrame, sub.stack(future_stack=True).unstack("periodo"))
+        if self._nombres is not None:
+            claves = (
+                resultado.index.get_level_values("indice")
+                if isinstance(resultado.index, pd.MultiIndex)
+                else resultado.index
+            )
+            # Inserta en la posición 0 -- inmediatamente después de `indice` (el
+            # índice de filas), antes de las columnas de periodo. `insert` muta
+            # `resultado` in place y no devuelve nada, por eso no reasigna.
+            resultado.insert(0, "nombre", self._nombres.reindex(claves).to_numpy())
+        return resultado
 
     def _repr_html_(self) -> str:
         """Delega el render HTML a `.largo`."""

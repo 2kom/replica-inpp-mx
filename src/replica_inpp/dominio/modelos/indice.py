@@ -23,6 +23,12 @@ class ResultadoIndice(Resultado):
             columnas de cobertura/calidad por fila.
         df_diagnostico: DataFrame plano, una fila por celda `(periodo, generico)`
             sin dato — no comparte índice con `df_resultado`.
+        nombres: nombre legible por valor de `indice` (índice: mismos valores que
+            el nivel `indice` de `df_resultado`), opcional. Solo tiene sentido con
+            agregación por nivel SCIAN y cuando la canasta trae nombre real (no
+            bare) — con `"INPP"`/`"MERCANCIAS_SERVICIOS"` o canasta solo con
+            códigos, se omite (`None`): `.resultado.ancho` no agrega columna
+            `nombre` en ese caso, en vez de agregarla vacía.
 
     Raises:
         InvarianteViolado: Si `manifiesto` está vacío, si `df_resultado` no trae
@@ -78,6 +84,7 @@ class ResultadoIndice(Resultado):
         manifiesto: list[ManifestCalculo],
         df_reporte: pd.DataFrame,
         df_diagnostico: pd.DataFrame,
+        nombres: pd.Series | None = None,
     ) -> None:
         if not manifiesto:
             raise InvarianteViolado("ResultadoIndice.manifiesto no puede estar vacío")
@@ -115,6 +122,7 @@ class ResultadoIndice(Resultado):
         self._manifiesto = manifiesto
         self._df_reporte = df_reporte
         self._df_diagnostico = df_diagnostico
+        self._nombres = nombres
 
     @property
     def manifiesto(self) -> list[ManifestCalculo]:
@@ -126,6 +134,7 @@ class ResultadoIndice(Resultado):
         return Vista(
             self._df_resultado.drop(columns=["indice_incidencia"], errors="ignore"),
             ["indice_replicado"],
+            nombres=self._nombres,
         )
 
     @property

@@ -73,6 +73,24 @@ AGREGACION_A_COLUMNA: dict[str, str] = {
     "C": "codigo clase",
 }
 
+# Nombre canónico por alias — normaliza la abreviatura oficial ("S", "SB", "R",
+# "SR", "C") al nombre completo, para que `ResultadoIndice`/`ManifestCalculo`
+# siempre guarden el mismo valor sin importar qué alias se haya pasado a
+# `calcular_indice`. `TIPO_INPP` y `"MERCANCIAS_SERVICIOS"` no están acá porque
+# ya son su propio nombre canónico (sin abreviatura que normalizar).
+AGREGACION_A_NOMBRE: dict[str, str] = {
+    "SECTOR": "SECTOR",
+    "S": "SECTOR",
+    "SUBSECTOR": "SUBSECTOR",
+    "SB": "SUBSECTOR",
+    "RAMA": "RAMA",
+    "R": "RAMA",
+    "SUBRAMA": "SUBRAMA",
+    "SR": "SUBRAMA",
+    "CLASE": "CLASE",
+    "C": "CLASE",
+}
+
 # Agregaciones válidas que NO son nivel SCIAN — no tienen columna 1:1 en la
 # canasta, se calculan aparte en dominio/calculo (Mercancías/Servicios agrupa
 # por SECTORES_MERCANCIAS vs complemento).
@@ -129,11 +147,20 @@ COLUMNA_ENCADENAMIENTO_POR_RECORTE: dict[RecorteINPP, str] = {
 
 # --- Mercancías / Servicios ---
 
-# Sectores que integran "Mercancías" — verificado numéricamente contra los 3
-# xlsx de ponderadores reales (2012/2019/2025): la suma de estos sectores
-# reproduce exacto la fila "Mercancías" de cada uno. El complemento (todo lo
-# que no está acá) es "Servicios".
-SECTORES_MERCANCIAS: frozenset[str] = frozenset({"11", "21", "22", "23", "31-33"})
+# Sectores que integran "Mercancías" — verificado numéricamente contra la
+# canasta 2019 real: la suma de estos sectores reproduce exacto 66.46585
+# (fila "Mercancías" del xlsx de ponderadores). El complemento (todo lo que
+# no está acá) es "Servicios" (33.53415).
+#
+# "31", "32", "33" van SEPARADOS, no como "31-33": `codigo sector` de
+# `CanastaINPP` nunca trae el rango combinado — INEGI publica "31-33
+# Industrias manufactureras" como una sola serie en el BIE, pero en la
+# canasta real cada genérico ya viene resuelto a su sector específico
+# (31, 32 o 33) vía `resolver_sector_agrupado` (`tools/canasta_inpp/`).
+# Un `"31-33"` acá nunca matchea nada — filtraba manufacturas entero del
+# grupo "Mercancías" (bug real, encontrado comparando contra INEGI: daba
+# 20.98/79.02 en vez de 66.46585/33.53415).
+SECTORES_MERCANCIAS: frozenset[str] = frozenset({"11", "21", "22", "23", "31", "32", "33"})
 
 # --- Petróleo ---
 
