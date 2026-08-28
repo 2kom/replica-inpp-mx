@@ -33,7 +33,8 @@ def calcular_indice(
             `"demanda_interna_consumo"`, `"demanda_interna_capital"` o
             `"exportaciones"`). Si se omite, se infiere solo cuando el
             `recorte` de `serie` admite un único rubro válido — con
-            `produccion_total` (5 rubros posibles) hay que indicarlo.
+            `produccion_total` o `mercado_nacional` (recortes ambiguos, ver
+            tabla abajo) hay que indicarlo.
         sin_petroleo: excluye el genérico `070` (Petróleo crudo) antes de
             agrupar — reproduce "INPP sin Petróleo y con Servicios" (BIE
             `910491`), verificado exacto contra el BIE real. NO es "Índice
@@ -44,20 +45,33 @@ def calcular_indice(
     válido, `—` = no aplica. `agregacion` no aparece en la matriz porque es
     ortogonal: combina libre con cualquier celda `✓` (opera sobre `codigo
     <nivel>`/`codigo sector` de `CanastaINPP`, columna siempre presente sin
-    importar el rubro)::
+    importar el rubro). Emparejamiento verificado contra la nota b/ al pie de
+    cada hoja del xlsx de ponderadores de 2019 y 2025 (coinciden exacto entre
+    sí), que dice explícito con qué precios se combina cada columna de peso —
+    no siempre es `produccion_total`, como se asumía antes. 2012 trae una
+    anomalía de copy-paste en 2 de sus 5 notas (`bienes_finales`/
+    `exportaciones` mencionan "demanda interna", tema ajeno a esas hojas) que
+    no se toma como señal confiable — ver `dominio/tipos.py::RUBROS_POR_RECORTE`::
 
         rubro \\ recorte          produccion_total  mercado_nacional  bienes_finales  mercado_exportacion
-        produccion_total                 ✓                 ✓                —                 —
+        produccion_total                 ✓                 —                —                 —
         bienes_intermedios               ✓                 —                —                 —
-        demanda_interna_total            ✓                 —                —                 —
-        demanda_interna_consumo          ✓                 —                —                 —
-        demanda_interna_capital          ✓                 —                —                 —
+        demanda_interna_total            —                 ✓                —                 —
+        demanda_interna_consumo          —                 ✓                —                 —
+        demanda_interna_capital          —                 ✓                —                 —
         bienes_finales                   —                 —                ✓                 —
         exportaciones                    —                 —                —                 ✓
 
-    Columna `produccion_total` es la única ambigua (5 `✓`) — ahí hay que
-    indicar `rubro` a mano; las otras 3 columnas tienen un único `✓` y se
-    infieren solas.
+    Columnas `produccion_total` (2 `✓`) y `mercado_nacional` (3 `✓`) son
+    ambiguas — ahí hay que indicar `rubro` a mano; `bienes_finales` y
+    `mercado_exportacion` tienen un único `✓` y se infieren solas.
+    `demanda_interna_total/consumo/capital` con `mercado_nacional` coincide,
+    dentro del error de punto flotante (max_abs ≤ 3.27e-13; 73/73 dentro de
+    tolerancia 0.0009), con los indicadores del BIE (validado 2026-08-27);
+    `bienes_intermedios` también trae nota b/ "mercado nacional" pero no
+    reproduce exacto con ninguna de las dos series probadas (mecanismo real
+    sin identificar) — se deja en
+    `produccion_total`. Mismo caso sin resolver para `bienes_finales`.
 
     Raises:
         VersionNoCoincide: `serie` viene de `cargar_serie` (trae `version` en

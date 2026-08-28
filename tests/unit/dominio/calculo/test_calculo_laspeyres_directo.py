@@ -149,6 +149,35 @@ def test_rubro_se_infiere_para_recorte_1a1() -> None:
     assert r.manifiesto[0].rubro == "bienes_finales"
 
 
+# ---------- demanda_interna_* con recorte mercado_nacional (negociación 2026-08-27) ----------
+#
+# La nota b/ del xlsx de ponderadores dice que estas 3 columnas de peso se
+# combinan con precios de MERCADO NACIONAL, no produccion_total como asumía
+# el mapa antes -- ver RUBROS_POR_RECORTE en dominio/tipos.py. Confirmado
+# contra el BIE real: con mercado_nacional coincide dentro del error de punto
+# flotante; con produccion_total no.
+
+
+@pytest.mark.parametrize(
+    "rubro", ["demanda_interna_total", "demanda_interna_consumo", "demanda_interna_capital"]
+)
+def test_rubro_demanda_interna_valido_para_recorte_mercado_nacional(rubro: str) -> None:
+    r = LaspeyresDirecto().calcular(_canasta(), _serie("mercado_nacional"), "INPP", rubro=rubro)
+    assert r.manifiesto[0].rubro == rubro
+
+
+def test_rubro_demanda_interna_invalido_para_recorte_produccion_total() -> None:
+    with pytest.raises(InvarianteViolado, match="no es válido para el recorte"):
+        LaspeyresDirecto().calcular(
+            _canasta(), _serie("produccion_total"), "INPP", rubro="demanda_interna_total"
+        )
+
+
+def test_rubro_ambiguo_para_recorte_mercado_nacional_sin_indicar() -> None:
+    with pytest.raises(InvarianteViolado, match="admite varios rubros"):
+        LaspeyresDirecto().calcular(_canasta(), _serie("mercado_nacional"), "INPP")
+
+
 # ---------- sin_petroleo ----------
 
 

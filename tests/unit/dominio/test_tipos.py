@@ -83,15 +83,13 @@ def test_rubros_por_recorte_cubre_los_4_recortes() -> None:
     }
 
 
-def test_rubros_por_recorte_solo_produccion_total_es_ambiguo() -> None:
-    assert RUBROS_POR_RECORTE["produccion_total"] == {
-        "produccion_total",
-        "bienes_intermedios",
+def test_rubros_por_recorte_produccion_total_y_mercado_nacional_son_ambiguos() -> None:
+    assert RUBROS_POR_RECORTE["produccion_total"] == {"produccion_total", "bienes_intermedios"}
+    assert RUBROS_POR_RECORTE["mercado_nacional"] == {
         "demanda_interna_total",
         "demanda_interna_consumo",
         "demanda_interna_capital",
     }
-    assert RUBROS_POR_RECORTE["mercado_nacional"] == {"produccion_total"}
     assert RUBROS_POR_RECORTE["bienes_finales"] == {"bienes_finales"}
     assert RUBROS_POR_RECORTE["mercado_exportacion"] == {"exportaciones"}
 

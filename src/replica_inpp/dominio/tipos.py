@@ -112,21 +112,37 @@ RUBRO_A_COLUMNA_PESO: dict[str, str] = {
 
 RUBROS_VALIDOS: frozenset[str] = frozenset(RUBRO_A_COLUMNA_PESO)
 
-# Qué `rubro` son válidos para cada `recorte` de serie — verificado contra los
-# xlsx de ponderadores reales (5 hojas × 3 versiones). Solo produccion_total
-# tiene ambigüedad real (5 rubros posibles, misma serie reusada); los otros 3
-# recortes son 1:1 con su columna.
+# Qué `rubro` son válidos para cada `recorte` de serie -- verificado contra la
+# nota b/ al pie de cada hoja del xlsx de ponderadores de 2019 y 2025 (2025
+# coincide EXACTO, palabra por palabra, con 2019 en las 5 notas), que dice
+# EXPLÍCITO con qué precios se combina cada columna de peso. Antes esta tabla
+# asumía que toda columna de peso salvo "produccion total" se combinaba con
+# los precios de produccion_total -- falso: la nota b/ de DemandaInterna dice
+# "combinadas con los precios para mercado nacional", no producción total.
+# 2012 tiene una anomalía sin resolver: las notas b/ de sus hojas "Bienes
+# Finales" y "Exportaciones" son texto IDÉNTICO palabra por palabra entre sí y
+# mencionan "demanda interna" -- tema ajeno a ambas hojas, evidencia interna
+# de copy-paste en el xlsx fuente. No se toma como señal confiable (2019 y
+# 2025, independientes entre sí, coinciden en el texto correcto por tema) --
+# no justifica versionar este mapa por `version` de canasta.
+# Corregido y confirmado numéricamente contra el BIE real (validación
+# 2026-08-27): demanda_interna_total/consumo/capital con la serie
+# mercado_nacional coinciden, dentro del error de punto flotante (max_abs ≤
+# 3.27e-13; 73/73 dentro de tolerancia 0.0009), con los indicadores del BIE
+# 1380015/1380016/1380017 -- antes (con produccion_total) diff hasta 0.5.
+# `bienes_intermedios` también trae nota b/ "mercado nacional", pero probado
+# contra el BIE (1750002) sigue sin dar exacto (max 3.09/3.10 con cualquiera
+# de las dos series) -- se deja tal cual, en produccion_total, mecanismo real
+# sin identificar todavía.
+# `bienes_finales` trae su propia nota b/ ("combinadas con los precios para
+# mercado de producción total"), probada contra produccion_total (1700001) y
+# tampoco da exacto (max 1.18, igual que con la serie bienes_finales) -- mismo
+# caso, sin tocar.
 RUBROS_POR_RECORTE: dict[RecorteINPP, frozenset[str]] = {
-    "produccion_total": frozenset(
-        {
-            "produccion_total",
-            "bienes_intermedios",
-            "demanda_interna_total",
-            "demanda_interna_consumo",
-            "demanda_interna_capital",
-        }
+    "produccion_total": frozenset({"produccion_total", "bienes_intermedios"}),
+    "mercado_nacional": frozenset(
+        {"demanda_interna_total", "demanda_interna_consumo", "demanda_interna_capital"}
     ),
-    "mercado_nacional": frozenset({"produccion_total"}),
     "bienes_finales": frozenset({"bienes_finales"}),
     "mercado_exportacion": frozenset({"exportaciones"}),
 }
