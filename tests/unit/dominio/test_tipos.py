@@ -6,6 +6,7 @@ from pathlib import Path
 from replica_inpp.dominio.periodos import PeriodoMensual
 from replica_inpp.dominio.tipos import (
     AGREGACION_A_COLUMNA,
+    AGREGACION_A_NOMBRE,
     AGREGACIONES_ESPECIALES,
     AGREGACIONES_VALIDAS,
     CODIGO_PETROLEO_CRUDO,
@@ -42,6 +43,31 @@ def test_agregacion_a_columna_contenido_exacto() -> None:
         "CLASE": "codigo clase",
         "C": "codigo clase",
     }
+
+
+# (negociación 2026-08-28, H10): sin estos 2 tests, `AGREGACION_A_NOMBRE` no
+# tenía ninguna cobertura directa -- solo se ejercitaba indirecto vía
+# `test_agregacion_abreviatura_se_normaliza_a_nombre_canonico` en
+# test_calculo_laspeyres_directo.py, que no protege sus claves ni su contenido.
+
+
+def test_agregacion_a_nombre_contenido_exacto() -> None:
+    assert AGREGACION_A_NOMBRE == {
+        "SECTOR": "SECTOR",
+        "S": "SECTOR",
+        "SUBSECTOR": "SUBSECTOR",
+        "SB": "SUBSECTOR",
+        "RAMA": "RAMA",
+        "R": "RAMA",
+        "SUBRAMA": "SUBRAMA",
+        "SR": "SUBRAMA",
+        "CLASE": "CLASE",
+        "C": "CLASE",
+    }
+
+
+def test_agregacion_a_nombre_mismas_claves_que_columna() -> None:
+    assert set(AGREGACION_A_NOMBRE) == set(AGREGACION_A_COLUMNA)
 
 
 def test_agregaciones_especiales_contenido_exacto() -> None:
