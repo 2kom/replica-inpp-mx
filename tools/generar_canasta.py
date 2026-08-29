@@ -21,6 +21,14 @@ VERSIONES = (2012, 2019, 2025)
 # Única versión que trae su propio archivo de factor de encadenamiento
 VERSION_ENCADENAMIENTO_OBLIGATORIO = 2025
 
+# Identidad conocida del código 114 en 2019 ("Chocolate en tableta y en polvo",
+# clase SCIAN 311350) -- confirmada contra los xlsx reales de 2019 (114) y 2025
+# (113, ya reconciliado). La reconciliación 114->113 solo se aplica si la fila
+# 114 coincide con esta identidad; nombre en minúsculas para comparar con
+# `.casefold()` sin depender de mayúsculas.
+_NOMBRE_CHOCOLATE_114 = "chocolate en tableta y en polvo"
+_CLASE_CHOCOLATE_114 = "311350"
+
 
 def parsear_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Define y parsea los flags del CLI, valida su combinación."""
@@ -163,14 +171,38 @@ def main(argv: list[str] | None = None) -> None:
     df = extraer_ponderadores(args.ponderadores, args.version)
 
     if args.version == 2019:
+        # discrepancia de fuente: "Chocolate en tableta y en polvo" es 113 en
+        # --canasta pero 114 en --ponderadores -- confirmado con la Tabla de
+        # correspondencia SCIAN 2013-2007 de INEGI (fusión de 113+114 hacia 113).
+        # Se reconcilia siempre (no solo con --canasta) para que el código de
+        # salida sea consistente con 2025, que ya usa 113 en ambos archivos.
+        filas_113 = df.loc[df["codigo"] == "113"]
+        filas_114 = df.loc[df["codigo"] == "114"]
+        if not filas_113.empty and not filas_114.empty:
+            # si --ponderadores ya trae AMBOS códigos como genéricos distintos, la
+            # reconciliación los fusionaría en silencio bajo "113", perdiendo uno
+            # de los dos ponderadores -- no es el caso real conocido (donde solo
+            # existe 114), pero nada en el xlsx lo garantiza.
+            raise ValueError(
+                "No se puede reconciliar 114->113 en 2019: --ponderadores ya trae "
+                "ambos códigos como genéricos distintos "
+                f"(113={filas_113['generico'].tolist()!r}, "
+                f"114={filas_114['generico'].tolist()!r}) -- fusionarlos perdería "
+                "uno de los dos ponderadores en silencio."
+            )
+        for _, fila in filas_114.iterrows():
+            nombre_ok = str(fila["generico"]).strip().casefold() == _NOMBRE_CHOCOLATE_114
+            clase_ok = str(fila["clase"]).strip() == _CLASE_CHOCOLATE_114
+            if not (nombre_ok and clase_ok):
+                raise ValueError(
+                    "No se puede reconciliar 114->113 en 2019: el genérico bajo 114 no "
+                    f"es el 'Chocolate en tableta y en polvo' (clase {_CLASE_CHOCOLATE_114}) "
+                    f"conocido -- código=114, nombre={fila['generico']!r}, "
+                    f"clase={fila['clase']!r}."
+                )
         df["codigo"] = df["codigo"].replace({"114": "113"})
 
     if args.canasta is not None:
-        if args.version == 2019:
-            # discrepancia de fuente: "Chocolate en tableta y en polvo" es 113 en
-            # --canasta pero 114 en --ponderadores -- confirmado con la Tabla de
-            # correspondencia SCIAN 2013-2007 de INEGI (fusión de 113+114 hacia 113).
-            df["codigo"] = df["codigo"].replace({"114": "113"})
         df_canasta = extraer_canasta(args.canasta, args.version)
         _validar_correspondencia("canasta", set(df["codigo"]), set(df_canasta["codigo"]))
         columnas_jerarquia = ["generico", "sector", "subsector", "rama", "subrama", "clase"]

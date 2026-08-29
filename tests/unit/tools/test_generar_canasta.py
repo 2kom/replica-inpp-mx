@@ -224,6 +224,20 @@ def _df_ponderadores(codigos: list[str]) -> pd.DataFrame:
     )
 
 
+def _con_identidad_chocolate_114(df: pd.DataFrame) -> pd.DataFrame:
+    """Fuerza la fila `codigo == "114"` a la identidad real conocida (Chocolate
+    en tableta y en polvo, clase 311350) -- necesaria para que pase la
+    validación de identidad de `main()` antes de reconciliar a 113. Sin esto,
+    los valores ficticios de `_df_ponderadores` ("generico base 114") no
+    coinciden y `main()` rechaza la reconciliación."""
+    df = df.copy()
+    df.loc[df["codigo"] == "114", ["generico", "clase"]] = [
+        "Chocolate en tableta y en polvo",
+        "311350",
+    ]
+    return df
+
+
 def _df_canasta(codigos: list[str]) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -368,7 +382,7 @@ def test_main_solo_ponderadores_no_llama_canasta_ni_encadenamiento(
 def test_main_con_canasta_reconcilia_114_a_113_solo_en_2019(
     tmp_path: Path, pipeline: _Pipeline
 ) -> None:
-    pipeline._ponderadores = _df_ponderadores(["100", "114"])
+    pipeline._ponderadores = _con_identidad_chocolate_114(_df_ponderadores(["100", "114"]))
     pipeline._canasta = _df_canasta(["100", "113"])
     canasta = _xlsx(tmp_path, "canasta.xlsx")
 
@@ -383,6 +397,66 @@ def test_main_con_canasta_reconcilia_114_a_113_solo_en_2019(
     assert fila["generico"] == "generico canasta 113"
     # el peso (columna que no es de jerarquía) se preserva desde --ponderadores.
     assert list(df["produccion total"]) == ["1", "1"]
+
+
+def test_main_sin_canasta_113_y_114_ambos_presentes_falla(
+    tmp_path: Path, pipeline: _Pipeline
+) -> None:
+    # regresion: si --ponderadores ya trae 113 Y 114 como generos distintos, la
+    # reconciliacion no debe fusionarlos en silencio (perderia uno de los dos
+    # ponderadores) -- debe fallar con ambos codigos en el mensaje, en vez de
+    # escribir un CSV con codigo duplicado.
+    pipeline._ponderadores = _df_ponderadores(["100", "113", "114"])
+
+    with pytest.raises(ValueError) as exc_info:
+        main(_argv_base(tmp_path, version=2019))
+
+    assert "113" in str(exc_info.value)
+    assert "114" in str(exc_info.value)
+    assert "guardar_csv" not in pipeline.llamadas
+
+
+def test_main_sin_canasta_reconcilia_114_a_113_en_2019(tmp_path: Path, pipeline: _Pipeline) -> None:
+    # regresion: la reconciliacion 114->113 corre siempre en 2019 desde 3f95e19
+    # (no solo cuando se pasa --canasta) -- sin este test, el camino solo-ponderadores
+    # no tenia ninguna cobertura de ese comportamiento.
+    pipeline._ponderadores = _con_identidad_chocolate_114(_df_ponderadores(["100", "114"]))
+
+    main(_argv_base(tmp_path, version=2019))
+
+    df = cast(pd.DataFrame, pipeline.guardado["df"])
+    assert sorted(df["codigo"]) == ["100", "113"]
+
+
+@pytest.mark.parametrize(
+    ("generico", "clase"),
+    [
+        ("Producto ajeno", "311350"),  # nombre incorrecto, clase correcta
+        ("Chocolate en tableta y en polvo", "999999"),  # nombre correcto, clase incorrecta
+    ],
+    ids=["nombre_incorrecto", "clase_incorrecta"],
+)
+def test_main_sin_canasta_114_con_identidad_ajena_falla(
+    tmp_path: Path, pipeline: _Pipeline, generico: str, clase: str
+) -> None:
+    # regresion: 114 solo debe reconciliarse a 113 si es el "Chocolate en
+    # tableta y en polvo" (clase 311350) conocido -- un solo caso con AMBOS
+    # campos mal no protegeria las 2 validaciones por separado (si el codigo
+    # solo comprobara una de las dos, ese unico caso seguiria pasando);
+    # parametrizado con un campo incorrecto por vez para que cada validacion
+    # se pruebe de forma independiente.
+    df = _df_ponderadores(["100", "114"])
+    df.loc[df["codigo"] == "114", ["generico", "clase"]] = [generico, clase]
+    pipeline._ponderadores = df
+
+    with pytest.raises(ValueError) as exc_info:
+        main(_argv_base(tmp_path, version=2019))
+
+    mensaje = str(exc_info.value)
+    assert "114" in mensaje
+    assert generico in mensaje
+    assert clase in mensaje
+    assert "guardar_csv" not in pipeline.llamadas
 
 
 def test_main_con_canasta_no_reconcilia_fuera_de_2019(tmp_path: Path, pipeline: _Pipeline) -> None:

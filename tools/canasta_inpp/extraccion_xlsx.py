@@ -54,28 +54,47 @@ def _es_codigo_generico(valor: object) -> bool:
     return False
 
 
-def _nombre_archivo_hoja(zf: zipfile.ZipFile, nombre_hoja: str) -> str:
-    """Resuelve un nombre de hoja al `sheetN.xml` correspondiente (Target relativo o absoluto)."""
-    workbook = ET.fromstring(zf.read("xl/workbook.xml"))
-    rid = next(
-        s.get(f"{{{_NS_REL}}}id")
-        for s in workbook.iter(f"{{{_NS_MAIN}}}sheet")
-        if s.get("name") == nombre_hoja
-    )
-    rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
-    destino = next(
-        r.get("Target") for r in rels.iter(f"{{{_NS_PKG_REL}}}Relationship") if r.get("Id") == rid
-    )
-    assert destino is not None, f"relación {rid!r} sin atributo Target"
-    if destino.startswith("/"):
-        return destino.lstrip("/")
-    return f"xl/{destino}"
+def _mapa_hojas(ruta: Path) -> dict[str, str]:
+    """Nombre de hoja -> ruta interna `sheetN.xml` dentro del xlsx.
 
-
-def _valores_crudos(ruta: Path, nombre_hoja: str) -> dict[str, str]:
-    """Lee el texto crudo (sin parsear a float) de las celdas numéricas de una hoja."""
+    Sin caché propia a propósito: cachear por `ruta` a nivel de módulo mezclaba
+    contenido viejo y nuevo si el archivo se reescribía entre dos llamadas sobre
+    la misma ruta (bug real, encontrado y revertido en esta misma sesión --
+    `extraer_ponderadores` es quien decide si vale la pena reusar el resultado,
+    llamando esta función una sola vez y pasándolo a sus 5 lecturas).
+    """
     with zipfile.ZipFile(ruta) as zf:
-        xml = zf.read(_nombre_archivo_hoja(zf, nombre_hoja))
+        workbook = ET.fromstring(zf.read("xl/workbook.xml"))
+        rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+
+        destinos_por_id: dict[str, str] = {}
+        for r in rels.iter(f"{{{_NS_PKG_REL}}}Relationship"):
+            rid, destino = r.get("Id"), r.get("Target")
+            assert rid is not None and destino is not None, f"relación sin Id/Target: {r.attrib}"
+            destinos_por_id[rid] = destino
+
+        mapa: dict[str, str] = {}
+        for s in workbook.iter(f"{{{_NS_MAIN}}}sheet"):
+            nombre, rid = s.get("name"), s.get(f"{{{_NS_REL}}}id")
+            assert nombre is not None and rid is not None, f"hoja sin name/r:id: {s.attrib}"
+            destino = destinos_por_id[rid]
+            mapa[nombre] = destino.lstrip("/") if destino.startswith("/") else f"xl/{destino}"
+    return mapa
+
+
+def _valores_crudos(
+    ruta: Path, nombre_hoja: str, mapa_hojas: dict[str, str] | None = None
+) -> dict[str, str]:
+    """Lee el texto crudo (sin parsear a float) de las celdas numéricas de una hoja.
+
+    `mapa_hojas`, si se pasa, evita recalcularlo -- lo usa `_leer_hoja_peso`
+    cuando `extraer_ponderadores` ya lo resolvió una vez para sus 5 hojas. Sin
+    pasarlo, se recalcula fresco acá mismo (sin caché ni estado que sobreviva a
+    esta llamada).
+    """
+    nombre_archivo = (mapa_hojas if mapa_hojas is not None else _mapa_hojas(ruta))[nombre_hoja]
+    with zipfile.ZipFile(ruta) as zf:
+        xml = zf.read(nombre_archivo)
 
     crudos: dict[str, str] = {}
     for celda in ET.fromstring(xml).iter(f"{{{_NS_MAIN}}}c"):
@@ -96,11 +115,20 @@ def _leer_hoja_peso(
     columnas_peso: dict[int, str],
     *,
     incluir_jerarquia: bool = False,
+    wb: openpyxl.Workbook | None = None,
+    mapa_hojas: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Lee una hoja de ponderadores, filas de genérico real, indexadas por `codigo`."""
-    wb = openpyxl.load_workbook(ruta, data_only=True)
+    """Lee una hoja de ponderadores, filas de genérico real, indexadas por `codigo`.
+
+    `wb`/`mapa_hojas` son opcionales -- `extraer_ponderadores` los carga una sola
+    vez y los reusa en sus 5 llamadas (evita reabrir/reparsear el mismo xlsx 5
+    veces). Un llamador directo (tests) los deja en `None` y esta función carga
+    los suyos, sin caché ni estado que sobreviva a la llamada.
+    """
+    if wb is None:
+        wb = openpyxl.load_workbook(ruta, data_only=True)
     ws: Worksheet = wb[hoja]
-    crudos = _valores_crudos(ruta, hoja)
+    crudos = _valores_crudos(ruta, hoja, mapa_hojas)
 
     filas: list[dict[str, object]] = []
     for row in ws.iter_rows():
@@ -152,6 +180,12 @@ def extraer_ponderadores(ruta: Path, version: VersionCanastaScian) -> pd.DataFra
             (producción total).
     """
     layout = LAYOUTS_XLSX[version]
+    # cargados una sola vez acá y reusados en las 5 lecturas de abajo -- evita
+    # reabrir/reparsear el mismo xlsx 5 veces. Viven solo durante esta llamada
+    # (parámetros locales, no caché de módulo): no hay riesgo de mezclar
+    # contenido viejo/nuevo si `ruta` cambia entre corridas distintas.
+    wb = openpyxl.load_workbook(ruta, data_only=True)
+    mapa_hojas = _mapa_hojas(ruta)
 
     ancla = _leer_hoja_peso(
         ruta,
@@ -159,12 +193,24 @@ def extraer_ponderadores(ruta: Path, version: VersionCanastaScian) -> pd.DataFra
         layout,
         {layout.col_peso_simple: "produccion total"},
         incluir_jerarquia=True,
+        wb=wb,
+        mapa_hojas=mapa_hojas,
     )
     bienes_intermedios = _leer_hoja_peso(
-        ruta, layout.hoja_bienes_intermedios, layout, {layout.col_peso_simple: "bienes intermedios"}
+        ruta,
+        layout.hoja_bienes_intermedios,
+        layout,
+        {layout.col_peso_simple: "bienes intermedios"},
+        wb=wb,
+        mapa_hojas=mapa_hojas,
     )
     bienes_finales = _leer_hoja_peso(
-        ruta, layout.hoja_bienes_finales, layout, {layout.col_peso_simple: "bienes finales"}
+        ruta,
+        layout.hoja_bienes_finales,
+        layout,
+        {layout.col_peso_simple: "bienes finales"},
+        wb=wb,
+        mapa_hojas=mapa_hojas,
     )
     demanda_interna = _leer_hoja_peso(
         ruta,
@@ -175,9 +221,16 @@ def extraer_ponderadores(ruta: Path, version: VersionCanastaScian) -> pd.DataFra
             layout.col_peso_demanda_consumo: "demanda interna consumo",
             layout.col_peso_demanda_capital: "demanda interna capital",
         },
+        wb=wb,
+        mapa_hojas=mapa_hojas,
     )
     exportaciones = _leer_hoja_peso(
-        ruta, layout.hoja_exportaciones, layout, {layout.col_peso_simple: "exportaciones"}
+        ruta,
+        layout.hoja_exportaciones,
+        layout,
+        {layout.col_peso_simple: "exportaciones"},
+        wb=wb,
+        mapa_hojas=mapa_hojas,
     )
 
     codigos_ancla = set(ancla.index)

@@ -234,6 +234,7 @@ CLAUDE.md
 # Codex AI
 .codex
 .codex/
+.agents/
 
 # Gemini AI
 .antigravitycli/

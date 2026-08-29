@@ -280,6 +280,50 @@ def test_extraer_ponderadores_preserva_el_texto_crudo_exacto(tmp_path: Path) -> 
     assert df.at["001", "produccion total"] == "5.9196304989416844E-3"
 
 
+# -- extraer_ponderadores: llamadas repetidas sobre la misma ruta -----------
+
+
+def _armar_xlsx_un_generico(ruta: Path, codigo: str, peso: float) -> None:
+    """xlsx de 5 hojas con un solo genérico -- para el test de reutilización
+    de `ruta` de abajo."""
+    layout = LAYOUTS_XLSX[2019]
+    wb = openpyxl.Workbook()
+    hoja_por_defecto = wb.active
+    assert hoja_por_defecto is not None
+    wb.remove(hoja_por_defecto)
+
+    ws = wb.create_sheet(layout.hoja_produccion_total)
+    ws.append(_fila_generico(codigo, "generico", peso))
+    ws = wb.create_sheet(layout.hoja_bienes_intermedios)
+    ws.append(_fila_generico(codigo, "generico", peso))
+    ws = wb.create_sheet(layout.hoja_bienes_finales)
+    ws.append(_fila_generico(codigo, "generico", peso))
+    ws = wb.create_sheet(layout.hoja_demanda_interna)
+    ws.append(_fila_generico(codigo, "generico", peso, peso, peso))
+    ws = wb.create_sheet(layout.hoja_exportaciones)
+    ws.append(_fila_generico(codigo, "generico", peso))
+    wb.save(ruta)
+
+
+def test_extraer_ponderadores_llamadas_repetidas_sobre_ruta_sobrescrita_no_mezcla_contenido(
+    tmp_path: Path,
+) -> None:
+    # regresion: un cache de workbook/mapa de hojas por ruta a nivel de modulo
+    # mezclaba estructura vieja con celdas nuevas si el archivo se reescribia
+    # entre dos llamadas sobre la misma ruta -- bug real, encontrado y revertido
+    # en esta sesion. codigo y peso juntos en la misma asercion: verificar solo
+    # uno no detectaria una mezcla parcial (ej. codigo nuevo con peso viejo).
+    ruta = tmp_path / "reutilizado.xlsx"
+
+    _armar_xlsx_un_generico(ruta, "001", 1.0)
+    primera = extraer_ponderadores(ruta, 2019)
+    assert primera.iloc[0][["codigo", "produccion total"]].tolist() == ["001", "1"]
+
+    _armar_xlsx_un_generico(ruta, "002", 9.0)
+    segunda = extraer_ponderadores(ruta, 2019)
+    assert segunda.iloc[0][["codigo", "produccion total"]].tolist() == ["002", "9"]
+
+
 # -- extraer_ponderadores: catálogos inconsistentes entre hojas -------------
 
 
