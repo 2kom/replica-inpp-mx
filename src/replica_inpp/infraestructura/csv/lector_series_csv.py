@@ -30,6 +30,12 @@ _PATRON_HOJA = re.compile(r"^(\d{3})\s+(.+)$")
 # versión de canasta (2012/2019/2025), verificado contra los xlsx/CSV reales.
 _PATRON_BASE = re.compile(r"Base\s+\w+\s+(\d{4})=100")
 
+# Caracteres de control (C0 sin \t\n\r, más C1 0x7F-0x9F) -- señal de que un byte
+# no era realmente latin-1: ese codec decodifica CUALQUIER byte sin excepción, así
+# que un 0x81 (indefinido en cp1252, control en latin-1) pasa silencioso salvo que
+# se revise el contenido resultante. Ver `LectorSeriesCsv._trae_caracteres_de_control`.
+_PATRON_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
 # Huérfano conocido de origen en `ae` de produccion_total (verificado s19): la fila
 # "...621511 Laboratorios médicos y de diagnóstico del sector privado, 622 Hospitales"
 # no tiene hijos correctamente encadenados en esta exportación de INEGI. `622` es
@@ -96,9 +102,9 @@ class LectorSeriesCsv:
         return años.pop() if años else None
 
     def _leer_csv(self, ruta: Path) -> pd.DataFrame:
-        for encoding in ["utf-8", "cp1252"]:
+        for encoding in ["utf-8", "cp1252", "latin-1"]:
             try:
-                return pd.read_csv(ruta, skiprows=5, dtype=str, encoding=encoding)
+                crudo = pd.read_csv(ruta, skiprows=5, dtype=str, encoding=encoding)
             except FileNotFoundError:
                 raise ArchivoNoEncontrado(f"No se encontró el archivo: {ruta}")
             except pd.errors.EmptyDataError:
@@ -108,18 +114,44 @@ class LectorSeriesCsv:
             except UnicodeDecodeError:
                 continue
 
-        try:
-            return pd.read_csv(ruta, skiprows=5, dtype=str, encoding="latin-1")
-        except FileNotFoundError:
-            raise ArchivoNoEncontrado(f"No se encontró el archivo: {ruta}")
-        except pd.errors.EmptyDataError:
-            raise ArchivoVacio(f"El archivo está vacío: {ruta}")
-        except pd.errors.ParserError:
-            raise ArchivoCorrupto(f"El archivo está corrupto o no es un CSV válido: {ruta}")
-        except UnicodeDecodeError:
-            raise EncodingNoLegible(
-                f"No se pudo decodificar el archivo con los encodings soportados: {ruta}"
-            )
+            # latin-1 nunca dispara UnicodeDecodeError (decodifica cualquier byte) --
+            # si llegamos acá con ese encoding y el header sale con caracteres de
+            # control, el byte original no era realmente decodificable con ninguno
+            # de los 3 encodings soportados: es EncodingNoLegible, no un CSV corrupto.
+            #
+            # Alcance aceptado (negociación 2026-08-28, H5): esto solo detecta bytes
+            # que decodifican a caracteres de control invisibles (ej. 0x81). Un byte
+            # roto que decodifica a un carácter IMPRIMIBLE pero incorrecto bajo
+            # cp1252 (ej. 0xEF -> 'ï', printable=True en cp1252 y en latin-1) no lo
+            # detecta acá -- se acepta como `ArchivoCorrupto` más abajo (`Título`
+            # esperado vs. mojibake real), con el valor decodificado expuesto en el
+            # mensaje como señal diagnóstica suficiente. Distinguir "imprimible pero
+            # semánticamente incorrecto" de "imprimible y correcto" exigiría comparar
+            # contra el literal exacto esperado en cada intento, lo que rompería el
+            # caso legítimo de un CSV bien codificado con un header distinto a
+            # "Título" (ver test `test_archivo_corrupto_sin_columna_titulo`, que debe
+            # seguir dando `ArchivoCorrupto`, no `EncodingNoLegible`) -- no vale la
+            # complejidad para un caso sin evidencia de ocurrir en datos reales.
+            if encoding == "latin-1" and self._trae_caracteres_de_control(crudo.columns):
+                raise EncodingNoLegible(
+                    f"No se pudo decodificar el archivo con los encodings soportados: {ruta}"
+                )
+            return crudo
+
+        # Inalcanzable por diseño (negociación 2026-08-28, H6): con los 3 encodings
+        # de arriba, el bucle siempre retorna o lanza DENTRO de la iteración latin-1
+        # -- ese codec nunca levanta `UnicodeDecodeError` (decodifica los 256
+        # valores de byte posibles), así que jamás se llega a agotar el for. Se deja
+        # como red de seguridad explícita en vez de `assert False`/`raise
+        # AssertionError`, para que mypy vea un retorno total de la función sin
+        # necesitar un `# type: ignore` ni un `Optional` de más.
+        raise EncodingNoLegible(
+            f"No se pudo decodificar el archivo con los encodings soportados: {ruta}"
+        )
+
+    @staticmethod
+    def _trae_caracteres_de_control(columnas: pd.Index) -> bool:
+        return any(_PATRON_CONTROL.search(str(c)) for c in columnas)
 
     def _columnas_periodo_validas(self, columnas: pd.Index) -> list[str]:
         validas = []
@@ -157,13 +189,17 @@ class LectorSeriesCsv:
         extracciones: list[_Extraccion] = []
         prefijos_vistos: set[str] = set()
 
-        for titulo in data.index:
+        # Posicional (`iloc`), no por etiqueta (`loc`): igual que `_extraer_jerarquico`
+        # más abajo -- con Título duplicado en el archivo, `.loc[titulo]` deja de
+        # devolver un `pd.Series` y devuelve un `DataFrame`, rompiendo el armado
+        # posterior con un error crudo de pandas en vez de uno propio del dominio.
+        for pos, titulo in enumerate(data.index):
             match = _PATRON_PLANO.search(str(titulo))
             if match is None:
                 return None
             prefijo, codigo, nombre = match.groups()
             prefijos_vistos.add(prefijo)
-            extracciones.append((codigo, _normalizar(nombre), data.loc[titulo]))
+            extracciones.append((codigo, _normalizar(nombre), data.iloc[pos]))
 
         if len(prefijos_vistos) != 1:
             raise ArchivoCorrupto(

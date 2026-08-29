@@ -184,6 +184,25 @@ def test_cargar_serie_real_2012_declarado_2012_no_falla() -> None:
     assert resultado.df.attrs["version"] == 2012
 
 
+# -- version vs. base detectada, camino jerárquico `ae` ----------------------
+# (negociación 2026-08-28: la validación de versión no tenía cobertura sobre el
+# camino jerárquico -- solo se había probado contra archivos planos `nae`)
+
+
+@pytest.mark.requires_data
+def test_cargar_serie_real_ae_2019_declarado_2025_falla() -> None:
+    ruta = DATA_DIR / "produccion_total" / "s19_h_nm_ae.CSV"
+    with pytest.raises(VersionNoCoincide):
+        insumos.cargar_serie(str(ruta), 2025)
+
+
+@pytest.mark.requires_data
+def test_cargar_serie_real_ae_2019_declarado_2019_no_falla() -> None:
+    ruta = DATA_DIR / "produccion_total" / "s19_h_nm_ae.CSV"
+    resultado = insumos.cargar_serie(str(ruta), 2019)
+    assert resultado.df.attrs["version"] == 2019
+
+
 # -- bases mezcladas en un mismo archivo (no solo la primera fila) ----------
 
 
