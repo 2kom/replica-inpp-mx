@@ -39,7 +39,11 @@ from replica_inpp.dominio.errores import (
     SerieVacia,
     VersionNoCoincide,
 )
+from replica_inpp.dominio.modelos.canasta import CanastaINPP
+from replica_inpp.dominio.modelos.indice import ResultadoIndice
+from replica_inpp.dominio.modelos.serie import SerieNormalizada
 from replica_inpp.dominio.periodos import PeriodoMensual, periodo_desde_str
+from replica_inpp.dominio.tipos import ManifestCalculo
 
 # Declaración para el type checker — runtime manejado por _ReplicaModule proxy.
 timeout_api: int
@@ -60,6 +64,11 @@ __all__ = [
     "calcular_indice",
     # consultas INEGI
     "consultar_indice",
+    # tipos de retorno
+    "CanastaINPP",
+    "ManifestCalculo",
+    "ResultadoIndice",
+    "SerieNormalizada",
     # errores
     "ArchivoCorrupto",
     "ArchivoNoEncontrado",

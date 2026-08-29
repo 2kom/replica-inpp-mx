@@ -81,7 +81,8 @@ def calcular_indice(
             para el `recorte` de `serie` (o es ambiguo y no se indicó).
         CanastaSinGenericos: tras filtrar pesos NaN/0 (y el 070 si
             `sin_petroleo=True`), no queda ningún genérico utilizable.
-        ErrorCalculo: a la serie le faltan genéricos que el grupo necesita, o
-            no tiene ningún periodo dentro del rango vigente de la versión.
+        ErrorCalculo: a la serie le faltan genéricos que el grupo necesita, no
+            tiene ningún periodo dentro del rango vigente de la versión, o hay
+            desbordamiento al ponderar la serie.
     """
     return LaspeyresDirecto().calcular(canasta, serie, agregacion, rubro, sin_petroleo)
