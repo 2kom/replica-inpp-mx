@@ -36,8 +36,9 @@ def consultar_indice(tipo: str) -> pd.DataFrame:
         tipo: se normaliza con `.upper()`. Por ahora solo `"PRODUCCION TOTAL"`.
 
     Raises:
-        ErrorConfiguracion: `tipo` sin indicador INEGI, o no hay token
-            configurado (`rep.set_token(...)` o `INEGI_TOKEN`).
+        ErrorConfiguracion: `tipo` sin indicador INEGI, no hay token
+            configurado (`rep.set_token(...)` o `INEGI_TOKEN`), o
+            `rep.timeout_api` es inválido (no positivo o no finito).
         FuenteNoDisponible: la API de INEGI no responde o devuelve error HTTP.
         RespuestaInvalida: la respuesta de INEGI tiene formato inesperado.
     """

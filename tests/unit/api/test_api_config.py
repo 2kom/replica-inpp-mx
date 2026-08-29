@@ -92,6 +92,34 @@ def test_mostrar_config_con_env_var(
     assert "INEGI_TOKEN" in out
 
 
+# (negociación 2026-08-28, H7): las 3 pruebas de arriba nunca afirmaban la línea
+# "cache: N indicador(es)" ni su número -- solo corrían `mostrar_config()` sin
+# crashear. Un `indicadores_en_cache()` equivocado hubiera pasado desapercibido.
+
+
+def test_mostrar_config_muestra_cache_vacio(capsys: pytest.CaptureFixture[str]) -> None:
+    rep.mostrar_config()
+    out = capsys.readouterr().out
+    assert "cache:       0 indicadores" in out
+
+
+def test_mostrar_config_muestra_cantidad_de_indicadores_en_cache(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    FuenteValidacionApi._cache["910491"] = {}
+    FuenteValidacionApi._cache["1700002"] = {}
+    rep.mostrar_config()
+    out = capsys.readouterr().out
+    assert "cache:       2 indicadores" in out
+
+
+def test_mostrar_config_singular_con_un_indicador(capsys: pytest.CaptureFixture[str]) -> None:
+    FuenteValidacionApi._cache["910491"] = {}
+    rep.mostrar_config()
+    out = capsys.readouterr().out
+    assert "cache:       1 indicador\n" in out
+
+
 # -- cache ---------------------------------------------------------------------
 
 
