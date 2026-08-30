@@ -120,8 +120,10 @@ def _recortar_series_fecha(df_serie: pd.DataFrame, version: VersionCanasta) -> p
 class CalculadorBase(ABC):
     """Contrato abstracto para estrategias de cálculo del dominio.
 
-    Implementaciones: `LaspeyresDirecto` (única por ahora — el encadenamiento
-    2025 queda para cuando exista `LaspeyresEncadenado`).
+    Implementaciones: `LaspeyresDirecto` (Etapa 2, sin encadenar) y
+    `LaspeyresEncadenado` (Etapa 3, encadenamiento 2025) — esta última todavía
+    no está conectada a `api/indices.py::calcular_indice`, que solo despacha a
+    `LaspeyresDirecto` (rechaza `canasta.version == 2025` en su lugar).
     """
 
     @abstractmethod

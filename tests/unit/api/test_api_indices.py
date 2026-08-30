@@ -165,6 +165,34 @@ def test_calcular_indice_sin_metadata_de_version_no_valida() -> None:
 # deje de propagar CanastaSinGenericos) sí quede detectada.
 
 
+# -- canasta 2025 rechazada: la fachada todavía no expone LaspeyresEncadenado
+# (negociación 2026-08-30) -- calcular_indice calculaba en silencio con
+# LaspeyresDirecto sobre canasta 2025, dando un número incorrecto (mezcla la
+# serie 2025, en escala absoluta continua de 2019, con ponderadores 2025) sin
+# avisar. Ver dominio/calculo/laspeyres_encadenado.py::LaspeyresEncadenado.
+
+
+def test_calcular_indice_canasta_2025_lanza_invariante_violado() -> None:
+    df = _canasta().df.copy()
+    canasta_2025 = CanastaINPP(df, 2025)
+    with pytest.raises(InvarianteViolado, match="LaspeyresEncadenado"):
+        calcular_indice(canasta_2025, _serie(), "INPP", rubro="produccion_total")
+
+
+def test_rep_calcular_indice_canasta_2025_lanza_invariante_violado() -> None:
+    # A diferencia del test anterior (import directo, protege el módulo API en
+    # aislamiento), este atraviesa `rep.calcular_indice` -- el defecto original
+    # (negociación 2026-08-30, ronda 2) estaba justo ahí: la fachada podía volver
+    # a apuntar a una implementación sin guardia y este test seguiría siendo el
+    # único que lo notaría, igual que ya pasa con
+    # `test_calcular_indice_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos`
+    # arriba.
+    df = _canasta().df.copy()
+    canasta_2025 = CanastaINPP(df, 2025)
+    with pytest.raises(InvarianteViolado, match="LaspeyresEncadenado"):
+        rep.calcular_indice(canasta_2025, _serie(), "INPP", rubro="produccion_total")
+
+
 def test_calcular_indice_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos() -> None:
     df = pd.DataFrame(
         {
