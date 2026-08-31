@@ -35,13 +35,9 @@ RECORTE_POR_PREFIJO: dict[str, RecorteINPP] = {
 
 # Rango de vigencia por versión de canasta, igual patrón que `RANGOS_CANASTAS` de
 # replica-inpc-mx. El fin de una versión coincide con el inicio de la siguiente
-# (periodo de traslape compartido) aunque solo 2019→2025 encadena de verdad; 2012
-# arranca en jun 2012 porque esa vintage tiene su propia base (Jun 2012=100). 2019
-# y 2025 declaran etiquetas de base DISTINTAS en el Título ("Base Julio 2019=100"
-# vs "Base Julio 2025=100", ver VersionCanasta arriba) pero comparten, por ahora,
-# la misma ESCALA NUMÉRICA: el rebase real de 2025 a su propia base es el paso de
-# encadenamiento todavía pendiente — hasta que corra, el valor numérico de la
-# serie 2025 sigue anclado a Jul 2019=100.
+# a propósito (periodo de traslape compartido) aunque solo 2019→2025 encadena de
+# verdad; 2012 arranca en jun 2012 porque esa vintage tiene su propia base (Jun
+# 2012=100). Ver VersionCanasta arriba para el caveat de escala numérica 2025.
 # `None` = vigente hasta hoy.
 RANGOS_CANASTAS: dict[VersionCanasta, tuple[PeriodoMensual, PeriodoMensual | None]] = {
     2012: (PeriodoMensual(2012, 6), PeriodoMensual(2019, 7)),
@@ -112,38 +108,14 @@ RUBRO_A_COLUMNA_PESO: dict[str, str] = {
 
 RUBROS_VALIDOS: frozenset[str] = frozenset(RUBRO_A_COLUMNA_PESO)
 
-# Qué `rubro` son válidos para cada `recorte` de serie -- verificado contra la
-# nota b/ al pie de cada hoja del xlsx de ponderadores de 2019 y 2025 (2025
-# coincide EXACTO, palabra por palabra, con 2019 en las 5 notas), que dice
-# EXPLÍCITO con qué precios se combina cada columna de peso. Antes esta tabla
-# asumía que toda columna de peso salvo "produccion total" se combinaba con
-# los precios de produccion_total -- falso: la nota b/ de DemandaInterna dice
-# "combinadas con los precios para mercado nacional", no producción total.
-# 2012 tiene una anomalía sin resolver: las notas b/ de sus hojas "Bienes
-# Finales" y "Exportaciones" son texto IDÉNTICO palabra por palabra entre sí y
-# mencionan "demanda interna" -- tema ajeno a ambas hojas, evidencia interna
-# de copy-paste en el xlsx fuente. No se toma como señal confiable (2019 y
-# 2025, independientes entre sí, coinciden en el texto correcto por tema) --
-# no justifica versionar este mapa por `version` de canasta.
-# Corregido y confirmado numéricamente contra el BIE real (validación
-# 2026-08-27): demanda_interna_total/consumo/capital con la serie
-# mercado_nacional coinciden, dentro del error de punto flotante (max_abs ≤
-# 3.27e-13; 73/73 dentro de tolerancia 0.0009), con los indicadores del BIE
-# 1380015/1380016/1380017 -- antes (con produccion_total) diff hasta 0.5.
-# `bienes_intermedios` también trae nota b/ "mercado nacional" -- movido acá
-# el 2026-08-30 (antes en produccion_total). La comparación anterior contra el
-# BIE (indicador 1750002, "no da exacto, max 3.09/3.10") no era evidencia
-# válida: 1750002 resultó ser un duplicado huérfano de 910493 ("Índice
-# General Excl. Petróleo"), sin relación conceptual con bienes intermedios
-# (ver bloque "bienes_intermedios/bienes_finales -- CERRADO" en CLAUDE.md) --
-# no hay serie BIE real contra qué validar ninguna de las dos opciones. Sin
-# esa comparación, no hay motivo para apartarse de la nota b/ literal, mismo
-# criterio que ya se aplicó a demanda_interna_total/consumo/capital.
-# `bienes_finales` trae su propia nota b/ ("combinadas con los precios para
-# mercado de producción total"), probada contra produccion_total (1700001) y
-# no da exacto (max 1.18, igual que con la serie bienes_finales) -- mismo
-# caso (1700001 es duplicado huérfano de 910491, ver CLAUDE.md), sin tocar:
-# ya usa su propio recorte (bienes_finales), no produccion_total.
+# Qué `rubro` es válido para cada `recorte` de serie -- sigue la nota b/ de cada hoja del
+# xlsx de ponderadores (dice con qué precios se combina cada columna de peso; no todas
+# combinan con produccion_total, aunque sea el patrón más común). 2012 tiene 2 notas con
+# copy-paste ajeno al tema de su hoja, no se usa como señal -- 2019/2025 coinciden entre sí.
+#
+# bienes_intermedios y demanda_interna_total/consumo/capital combinan con mercado_nacional
+# (no produccion_total); bienes_finales combina con produccion_total, no con su propio
+# recorte -- ambas decisiones a propósito, siguiendo la nota real, no un descuido.
 RUBROS_POR_RECORTE: dict[RecorteINPP, frozenset[str]] = {
     "produccion_total": frozenset({"produccion_total"}),
     "mercado_nacional": frozenset(
@@ -160,11 +132,8 @@ RUBROS_POR_RECORTE: dict[RecorteINPP, frozenset[str]] = {
 
 # --- Encadenamiento: solo aplica a partir de 2025 ---
 
-# Columna de `CanastaINPP` con el factor de encadenamiento por recorte —
-# verificado numéricamente contra un genérico con precios muy divergentes
-# entre recortes (Lámina de acero, código 339: los 4 valores de encadenamiento
-# resultaron distintos entre sí), confirmando que el eje del encadenamiento es
-# por SERIE (recorte), no por rubro/columna de peso.
+# Columna de `CanastaINPP` con el factor de encadenamiento por recorte -- el
+# eje del encadenamiento es por SERIE (recorte), no por rubro/columna de peso.
 COLUMNA_ENCADENAMIENTO_POR_RECORTE: dict[RecorteINPP, str] = {
     "produccion_total": "encadenamiento total",
     "mercado_nacional": "encadenamiento produccion nacional",
@@ -174,19 +143,16 @@ COLUMNA_ENCADENAMIENTO_POR_RECORTE: dict[RecorteINPP, str] = {
 
 # --- Mercancías / Servicios ---
 
-# Sectores que integran "Mercancías" — verificado numéricamente contra la
-# canasta 2019 real: la suma de estos sectores reproduce exacto 66.46585
-# (fila "Mercancías" del xlsx de ponderadores). El complemento (todo lo que
-# no está acá) es "Servicios" (33.53415).
+# Sectores que integran "Mercancías" -- el complemento (todo lo que no está
+# acá) es "Servicios".
 #
 # "31", "32", "33" van SEPARADOS, no como "31-33": `codigo sector` de
-# `CanastaINPP` nunca trae el rango combinado — INEGI publica "31-33
+# `CanastaINPP` nunca trae el rango combinado -- INEGI publica "31-33
 # Industrias manufactureras" como una sola serie en el BIE, pero en la
 # canasta real cada genérico ya viene resuelto a su sector específico
-# (31, 32 o 33) vía `resolver_sector_agrupado` (`tools/canasta_inpp/`).
-# Un `"31-33"` acá nunca matchea nada — filtraba manufacturas entero del
-# grupo "Mercancías" (bug real, encontrado comparando contra INEGI: daba
-# 20.98/79.02 en vez de 66.46585/33.53415).
+# (31, 32 o 33) vía `resolver_sector_agrupado` (`tools/canasta_inpp/`). Un
+# `"31-33"` acá nunca matchea nada -- filtra manufacturas entero del grupo
+# "Mercancías" en silencio.
 SECTORES_MERCANCIAS: frozenset[str] = frozenset({"11", "21", "22", "23", "31", "32", "33"})
 
 # --- Petróleo ---

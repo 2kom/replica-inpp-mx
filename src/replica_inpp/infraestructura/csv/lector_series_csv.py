@@ -119,7 +119,7 @@ class LectorSeriesCsv:
             # control, el byte original no era realmente decodificable con ninguno
             # de los 3 encodings soportados: es EncodingNoLegible, no un CSV corrupto.
             #
-            # Alcance aceptado (negociación 2026-08-28, H5): esto solo detecta bytes
+            # Alcance aceptado: esto solo detecta bytes
             # que decodifican a caracteres de control invisibles (ej. 0x81). Un byte
             # roto que decodifica a un carácter IMPRIMIBLE pero incorrecto bajo
             # cp1252 (ej. 0xEF -> 'ï', printable=True en cp1252 y en latin-1) no lo
@@ -138,7 +138,7 @@ class LectorSeriesCsv:
                 )
             return crudo
 
-        # Inalcanzable por diseño (negociación 2026-08-28, H6): con los 3 encodings
+        # Inalcanzable por diseño: con los 3 encodings
         # de arriba, el bucle siempre retorna o lanza DENTRO de la iteración latin-1
         # -- ese codec nunca levanta `UnicodeDecodeError` (decodifica los 256
         # valores de byte posibles), así que jamás se llega a agotar el for. Se deja

@@ -47,10 +47,8 @@ def calcular_indice(
             indicarlo a mano — ver `dominio/tipos.py::RUBROS_POR_RECORTE`
             para el resto del mapeo.
         sin_petroleo: excluye el genérico `070` (Petróleo crudo) antes de
-            agrupar — reproduce "INPP sin Petróleo y con Servicios" (BIE
-            `910491`), verificado exacto contra el BIE real. NO es "Índice
-            General Excluyendo Petróleo" (BIE `910493`) — esa serie diverge
-            (~3.3 puntos).
+            agrupar, sin normalizar aparte — la propia división `Σ(w·índice)/
+            Σw` ya renormaliza sobre los genéricos restantes.
         referencia: solo si `canasta.version == 2025` — `ResultadoIndice` de
             la MISMA `agregacion`/`rubro`/`sin_petroleo`, con `canasta.version
             =2019` y que cubra el periodo de traslape (jul-2025). Ignorado si
