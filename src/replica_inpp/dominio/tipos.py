@@ -130,18 +130,29 @@ RUBROS_VALIDOS: frozenset[str] = frozenset(RUBRO_A_COLUMNA_PESO)
 # mercado_nacional coinciden, dentro del error de punto flotante (max_abs ≤
 # 3.27e-13; 73/73 dentro de tolerancia 0.0009), con los indicadores del BIE
 # 1380015/1380016/1380017 -- antes (con produccion_total) diff hasta 0.5.
-# `bienes_intermedios` también trae nota b/ "mercado nacional", pero probado
-# contra el BIE (1750002) sigue sin dar exacto (max 3.09/3.10 con cualquiera
-# de las dos series) -- se deja tal cual, en produccion_total, mecanismo real
-# sin identificar todavía.
+# `bienes_intermedios` también trae nota b/ "mercado nacional" -- movido acá
+# el 2026-08-30 (antes en produccion_total). La comparación anterior contra el
+# BIE (indicador 1750002, "no da exacto, max 3.09/3.10") no era evidencia
+# válida: 1750002 resultó ser un duplicado huérfano de 910493 ("Índice
+# General Excl. Petróleo"), sin relación conceptual con bienes intermedios
+# (ver bloque "bienes_intermedios/bienes_finales -- CERRADO" en CLAUDE.md) --
+# no hay serie BIE real contra qué validar ninguna de las dos opciones. Sin
+# esa comparación, no hay motivo para apartarse de la nota b/ literal, mismo
+# criterio que ya se aplicó a demanda_interna_total/consumo/capital.
 # `bienes_finales` trae su propia nota b/ ("combinadas con los precios para
 # mercado de producción total"), probada contra produccion_total (1700001) y
-# tampoco da exacto (max 1.18, igual que con la serie bienes_finales) -- mismo
-# caso, sin tocar.
+# no da exacto (max 1.18, igual que con la serie bienes_finales) -- mismo
+# caso (1700001 es duplicado huérfano de 910491, ver CLAUDE.md), sin tocar:
+# ya usa su propio recorte (bienes_finales), no produccion_total.
 RUBROS_POR_RECORTE: dict[RecorteINPP, frozenset[str]] = {
-    "produccion_total": frozenset({"produccion_total", "bienes_intermedios"}),
+    "produccion_total": frozenset({"produccion_total"}),
     "mercado_nacional": frozenset(
-        {"demanda_interna_total", "demanda_interna_consumo", "demanda_interna_capital"}
+        {
+            "demanda_interna_total",
+            "demanda_interna_consumo",
+            "demanda_interna_capital",
+            "bienes_intermedios",
+        }
     ),
     "bienes_finales": frozenset({"bienes_finales"}),
     "mercado_exportacion": frozenset({"exportaciones"}),

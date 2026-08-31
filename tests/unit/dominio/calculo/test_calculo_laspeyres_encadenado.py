@@ -5,12 +5,14 @@ from typing import Any
 import pandas as pd
 import pytest
 
+from replica_inpp.dominio.calculo.laspeyres_directo import LaspeyresDirecto
 from replica_inpp.dominio.calculo.laspeyres_encadenado import LaspeyresEncadenado
 from replica_inpp.dominio.errores import ErrorCalculo, InvarianteViolado
 from replica_inpp.dominio.modelos.canasta import CanastaINPP
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.modelos.serie import SerieNormalizada
 from replica_inpp.dominio.periodos import PeriodoMensual
+from replica_inpp.dominio.tipos import ManifestCalculo
 
 _TRASLAPE = PeriodoMensual(2025, 7)
 _PERIODOS_NUEVOS = [_TRASLAPE, PeriodoMensual(2025, 8), PeriodoMensual(2025, 9)]
@@ -23,10 +25,14 @@ _GENERICOS = ["001", "070", "339", "460"]
 #
 # Pesos DISTINTOS a propósito entre la canasta anterior (25/25/25/25, igual)
 # y la nueva (10/20/30/40, distinto) -- esto es justo lo que expone la
-# regresión real: `factor_h` debe salir de correr `LaspeyresDirecto` sobre la
-# canasta ANTERIOR con SUS pesos, nunca promediar `f_j` con los pesos de la
-# canasta nueva (ver docstring de `LaspeyresEncadenado`, bug real encontrado
-# validando contra el BIE: daba un error multiplicativo constante ~0.87%).
+# regresión real: `factor_h` debe salir de `referencia` (calculado con
+# LaspeyresDirecto sobre la canasta ANTERIOR con SUS pesos), nunca de
+# promediar `f_j` con los pesos de la canasta nueva (ver docstring de
+# `LaspeyresEncadenado`, bug real encontrado validando contra el BIE).
+#
+# `LaspeyresEncadenado` recibe `referencia: ResultadoIndice` (no
+# canasta/serie crudas) -- se arma con `LaspeyresDirecto` sobre la canasta/
+# serie anterior, igual que haría `calcular_indice` en la práctica.
 
 
 def _canasta_anterior() -> CanastaINPP:
@@ -124,18 +130,40 @@ def _serie_nueva(recorte: Any = "produccion_total") -> SerieNormalizada:
     return SerieNormalizada(df, recorte)
 
 
+def _referencia(
+    agregacion: str = "INPP",
+    rubro: str = "produccion_total",
+    sin_petroleo: bool = False,
+    recorte: Any = "produccion_total",
+    canasta: CanastaINPP | None = None,
+    serie: SerieNormalizada | None = None,
+) -> ResultadoIndice:
+    """Arma el `ResultadoIndice` de referencia (canasta.version=2019) que
+    `LaspeyresEncadenado` espera -- misma combinación agregacion/rubro/
+    sin_petroleo que se le va a pedir a `calcular`, igual que haría
+    `calcular_indice` en la práctica.
+    """
+    return LaspeyresDirecto().calcular(
+        canasta if canasta is not None else _canasta_anterior(),
+        serie if serie is not None else _serie_anterior(recorte),
+        agregacion,
+        rubro=rubro,
+        sin_petroleo=sin_petroleo,
+    )
+
+
 # ---------- básicos ----------
 
 
 def test_calcular_retorna_resultado_indice() -> None:
-    r = LaspeyresEncadenado(_canasta_anterior(), _serie_anterior()).calcular(
+    r = LaspeyresEncadenado(_referencia()).calcular(
         _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total"
     )
     assert isinstance(r, ResultadoIndice)
 
 
 def test_valores_inpp_usa_peso_de_canasta_anterior_para_factor_h() -> None:
-    r = LaspeyresEncadenado(_canasta_anterior(), _serie_anterior()).calcular(
+    r = LaspeyresEncadenado(_referencia()).calcular(
         _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total"
     )
     # i_tramo (pesos NUEVOS 10/20/30/40 sobre escala local): 100.0, 104.10, 108.00
@@ -148,7 +176,7 @@ def test_valores_inpp_usa_peso_de_canasta_anterior_para_factor_h() -> None:
 
 
 def test_manifiesto_campos_correctos() -> None:
-    r = LaspeyresEncadenado(_canasta_anterior(), _serie_anterior()).calcular(
+    r = LaspeyresEncadenado(_referencia(sin_petroleo=True)).calcular(
         _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total", sin_petroleo=True
     )
     m = r.manifiesto[0]
@@ -159,18 +187,93 @@ def test_manifiesto_campos_correctos() -> None:
     assert m.calculador == "LaspeyresEncadenado"
 
 
-# ---------- validación de versión ----------
+# ---------- validación de referencia ----------
 
 
-def test_canasta_anterior_version_incorrecta_lanza_invariante_violado() -> None:
-    canasta_2025_como_anterior = _canasta_nueva()  # version=2025, no 2019
-    with pytest.raises(InvarianteViolado, match="canasta_anterior.version=2019"):
-        LaspeyresEncadenado(canasta_2025_como_anterior, _serie_anterior())
+def test_referencia_version_incorrecta_lanza_invariante_violado() -> None:
+    # referencia calculada con canasta.version=2025 (no 2019) -- no sirve como
+    # tramo anterior.
+    referencia_2025 = LaspeyresDirecto().calcular(
+        _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total"
+    )
+    with pytest.raises(InvarianteViolado, match="version=2019"):
+        LaspeyresEncadenado(referencia_2025).calcular(
+            _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total"
+        )
+
+
+def test_referencia_combinacion_distinta_lanza_invariante_violado() -> None:
+    # referencia calculada para SECTOR, se pide INPP -- no coincide.
+    referencia_sector = _referencia(agregacion="SECTOR")
+    with pytest.raises(InvarianteViolado, match="agregacion='INPP'"):
+        LaspeyresEncadenado(referencia_sector).calcular(
+            _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total"
+        )
+
+
+def test_referencia_con_manifiesto_ajeno_en_traslape_lanza_error_calculo() -> None:
+    # `referencia` compuesta por 2 manifiestos, construida 100% vía API pública
+    # (ResultadoIndice, sin mutar _df_resultado/_manifiesto): el manifiesto
+    # correcto (2019/INPP/produccion_total) NO tiene fila en el traslape
+    # (jul-2025); un manifiesto ajeno (2012/INPP/bienes_finales) sí la tiene,
+    # con valor 999 -- ningún índice duplicado, el constructor lo acepta. Antes
+    # de este fix, `.ancho` apilaba ambas filas bajo la misma etiqueta "INPP" y
+    # el filtro de traslape tomaba la fila ajena sin darse cuenta.
+    manifiesto_propio = ManifestCalculo(
+        version=2019,
+        agregacion="INPP",
+        rubro="produccion_total",
+        sin_petroleo=False,
+        calculador="LaspeyresDirecto",
+    )
+    manifiesto_ajeno = ManifestCalculo(
+        version=2012,
+        agregacion="INPP",
+        rubro="bienes_finales",
+        sin_petroleo=False,
+        calculador="LaspeyresDirecto",
+    )
+    df = pd.DataFrame(
+        {
+            "version": [2019, 2012],
+            "agregacion": ["INPP", "INPP"],
+            "rubro": ["produccion_total", "bienes_finales"],
+            "indice_replicado": [100.0, 999.0],
+            "estado_calculo": ["ok", "ok"],
+            "motivo_error": [None, None],
+        },
+        index=pd.MultiIndex.from_tuples(
+            [(PeriodoMensual(2019, 7), "INPP"), (_TRASLAPE, "INPP")], names=["periodo", "indice"]
+        ),
+    )
+    referencia_compuesta = ResultadoIndice(
+        df,
+        [manifiesto_propio, manifiesto_ajeno],
+        pd.DataFrame(index=df.index),
+        pd.DataFrame(
+            columns=[
+                "version",
+                "agregacion",
+                "rubro",
+                "periodo",
+                "generico",
+                "nivel_faltante",
+                "tipo_faltante",
+                "detalle",
+            ]
+        ),
+    )
+    assert df.index.is_unique  # precondición: el escenario no depende de duplicados
+
+    with pytest.raises(ErrorCalculo, match="traslape"):
+        LaspeyresEncadenado(referencia_compuesta).calcular(
+            _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total"
+        )
 
 
 def test_canasta_nueva_version_incorrecta_lanza_invariante_violado() -> None:
     with pytest.raises(InvarianteViolado, match="canasta.version=2025"):
-        LaspeyresEncadenado(_canasta_anterior(), _serie_anterior()).calcular(
+        LaspeyresEncadenado(_referencia()).calcular(
             _canasta_anterior(), _serie_nueva(), "INPP", rubro="produccion_total"
         )
 
@@ -181,7 +284,7 @@ def test_canasta_nueva_version_incorrecta_lanza_invariante_violado() -> None:
 def test_f_j_totalmente_vacio_lanza_error_calculo() -> None:
     canasta_sin_encadenamiento = _canasta_nueva(f_j_total_vacio=True)
     with pytest.raises(ErrorCalculo, match="sin --encadenamientos"):
-        LaspeyresEncadenado(_canasta_anterior(), _serie_anterior()).calcular(
+        LaspeyresEncadenado(_referencia()).calcular(
             canasta_sin_encadenamiento, _serie_nueva(), "INPP", rubro="produccion_total"
         )
 
@@ -195,9 +298,12 @@ def test_f_j_nan_parcial_en_un_generico_produce_sin_datos_solo_para_ese_grupo() 
     # publicada" aunque el precio de transporte sí estaba completo).
     canasta = _canasta_nueva(f_j_exportacion_transporte_nan=True)
     serie_exp = _serie_nueva(recorte="mercado_exportacion")
-    r = LaspeyresEncadenado(
-        _canasta_anterior(), _serie_anterior(recorte="mercado_exportacion")
-    ).calcular(canasta, serie_exp, "SECTOR", rubro="exportaciones")
+    referencia = _referencia(
+        agregacion="SECTOR", rubro="exportaciones", recorte="mercado_exportacion"
+    )
+    r = LaspeyresEncadenado(referencia).calcular(
+        canasta, serie_exp, "SECTOR", rubro="exportaciones"
+    )
     largo = r.resultado.largo
     estados = dict(zip(largo.index.get_level_values("indice"), largo["estado_calculo"]))
     assert estados["48"] == "sin_datos"  # transporte
@@ -220,7 +326,7 @@ def test_f_j_nan_parcial_en_un_generico_produce_sin_datos_solo_para_ese_grupo() 
     ).all()
 
 
-def test_traslape_faltante_en_serie_anterior_lanza_error_calculo() -> None:
+def test_traslape_faltante_en_referencia_lanza_error_calculo() -> None:
     serie_sin_traslape = SerieNormalizada(
         pd.DataFrame(
             {
@@ -231,8 +337,9 @@ def test_traslape_faltante_en_serie_anterior_lanza_error_calculo() -> None:
         ),
         "produccion_total",
     )
+    referencia_sin_traslape = _referencia(serie=serie_sin_traslape)
     with pytest.raises(ErrorCalculo, match="traslape"):
-        LaspeyresEncadenado(_canasta_anterior(), serie_sin_traslape).calcular(
+        LaspeyresEncadenado(referencia_sin_traslape).calcular(
             _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total"
         )
 
@@ -260,8 +367,9 @@ def test_producto_final_no_finito_lanza_error_calculo() -> None:
         ),
         "produccion_total",
     )
+    referencia_enorme = _referencia(serie=serie_anterior_enorme)
     with pytest.raises(ErrorCalculo, match="no finito"):
-        LaspeyresEncadenado(_canasta_anterior(), serie_anterior_enorme).calcular(
+        LaspeyresEncadenado(referencia_enorme).calcular(
             _canasta_nueva(), serie_nueva_enorme, "INPP", rubro="produccion_total"
         )
 
@@ -273,8 +381,9 @@ def test_grupo_sin_factor_h_en_tramo_anterior_lanza_error_calculo() -> None:
     df_nueva = _canasta_nueva().df.copy()
     df_nueva.loc["460", ["codigo sector", "sector"]] = ["99", "99"]
     canasta_reclasificada = CanastaINPP(df_nueva, 2025)
+    referencia_sector = _referencia(agregacion="SECTOR")
     with pytest.raises(ErrorCalculo, match="reclasificación"):
-        LaspeyresEncadenado(_canasta_anterior(), _serie_anterior()).calcular(
+        LaspeyresEncadenado(referencia_sector).calcular(
             canasta_reclasificada, _serie_nueva(), "SECTOR", rubro="produccion_total"
         )
 
@@ -283,7 +392,7 @@ def test_grupo_sin_factor_h_en_tramo_anterior_lanza_error_calculo() -> None:
 
 
 def test_sin_petroleo_excluye_070_de_i_tramo_y_de_factor_h() -> None:
-    r_sin = LaspeyresEncadenado(_canasta_anterior(), _serie_anterior()).calcular(
+    r_sin = LaspeyresEncadenado(_referencia(sin_petroleo=True)).calcular(
         _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total", sin_petroleo=True
     )
     # i_tramo sin petróleo (pesos NUEVOS 10/30/40 sobre soya/acero/transporte,
@@ -294,7 +403,7 @@ def test_sin_petroleo_excluye_070_de_i_tramo_y_de_factor_h() -> None:
     # /100 = 116.6667/100 = 1.166667
     #
     # Un mutante que excluya 070 SOLO de i_tramo (deja factor_h calculado con
-    # LaspeyresDirecto(sin_petroleo=False), petróleo incluido) sigue dando un
+    # una referencia con sin_petroleo=False, petróleo incluido) sigue dando un
     # resultado != con_petroleo -- ese mutante pasaba el assert viejo
     # ("valores_con != valores_sin"). Este oráculo exacto sí lo detecta: con el
     # mutante, factor_h queda en 1.10 (ver test de arriba) y el resultado en

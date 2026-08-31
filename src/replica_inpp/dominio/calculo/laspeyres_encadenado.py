@@ -15,7 +15,6 @@ from replica_inpp.dominio.calculo.base import (
     _rellenar_dato_serie_faltante,
     _validar_serie_cubre_grupo,
 )
-from replica_inpp.dominio.calculo.laspeyres_directo import LaspeyresDirecto
 from replica_inpp.dominio.errores import (
     CanastaSinGenericos,
     ErrorCalculo,
@@ -66,54 +65,58 @@ class LaspeyresEncadenado(CalculadorBase):
     2. Agregar `df_base` con las ponderaciones 2025 (`_laspeyres_por_grupo`)
        → `i_tramo`, el índice en su propia escala local.
     3. Encadenar de vuelta a escala absoluta con `factor_h = I_viejo(traslape)
-       / 100` — el índice de la MISMA `agregacion`/`rubro`/`sin_petroleo`
-       calculado con `LaspeyresDirecto` sobre `canasta_anterior`/
-       `serie_anterior` (2019), evaluado en el periodo de traslape. No es el
-       promedio ponderado de los `f_j` hijos con el peso 2025 (fórmula de
-       `LaspeyresEncadenadoT2` en `replica-inpc-mx`): ese promedio usa
-       ponderador NUEVO donde el manual pide "ponderaciones a julio de 2019"
-       — ponderador VIEJO. `LaspeyresDirecto` sobre la canasta anterior da
-       ese valor directo, sin reconciliar códigos de genérico entre
-       versiones (dos cálculos independientes, cada uno dentro de su propia
-       clasificación).
+       / 100` — el índice de la MISMA `agregacion`/`rubro`/`sin_petroleo`,
+       tomado de `referencia` (el `ResultadoIndice` de esa combinación con
+       `canasta.version=2019`, ya calculado con `LaspeyresDirecto` — p.ej. vía
+       `api/indices.py::calcular_indice`), evaluado en el periodo de
+       traslape. No es el promedio ponderado de los `f_j` hijos con el peso
+       2025 (fórmula de `LaspeyresEncadenadoT2` en `replica-inpc-mx`): ese
+       promedio usa ponderador NUEVO donde el manual pide "ponderaciones a
+       julio de 2019" — ponderador VIEJO. `referencia` ya trae ese valor
+       directo, sin reconciliar códigos de genérico entre versiones (dos
+       cálculos independientes, cada uno dentro de su propia clasificación).
     4. `resultado = i_tramo · factor_h`.
 
     Igual que `LaspeyresDirecto`, agrupa por 2 ejes independientes
     (`agregacion` x `rubro`); una corrida cubre una sola combinación.
 
+    A diferencia de `LaspeyresEncadenadoT1`/`T2` de `replica-inpc-mx` (que
+    reciben `referencia_empalme_por_indice: dict[str, float]`, ya reducido a
+    un valor por categoría), acá `referencia` es el `ResultadoIndice`
+    completo tal cual devuelve `LaspeyresDirecto` — sin paso de normalización
+    aparte porque `SECTOR`/`INPP`/`MERCANCIAS_SERVICIOS` usan código estable
+    entre 2019 y 2025 (no hace falta reconciliar nombre/código de categoría
+    entre versiones, a diferencia de INPC).
+
     Args:
-        canasta_anterior: canasta de la versión INMEDIATAMENTE anterior
-            (2019, cuando `calcular` recibe versión 2025) — se usa solo para
-            `factor_h`, nunca se cruza código a código con la canasta nueva.
-        serie_anterior: serie de la misma versión que `canasta_anterior`,
-            mismo `recorte` que la serie que se pasará a `calcular`.
+        referencia: `ResultadoIndice` de la MISMA `agregacion`/`rubro`/
+            `sin_petroleo` que se le pedirá a `calcular`, calculado con
+            `canasta.version=2019` (típicamente `LaspeyresDirecto` vía
+            `calcular_indice`) y que cubra el periodo de traslape (jul-2025).
+            Se valida recién en `calcular`, porque `agregacion`/`rubro`/
+            `sin_petroleo` no se conocen hasta esa llamada.
 
     Raises:
-        InvarianteViolado: al construir, si `canasta_anterior.version` no es
-            2019; al calcular, si `canasta.version` no es 2025, si
-            `agregacion` no es válida, o si `rubro` no es válido para el
-            `recorte` de `serie` (o es ambiguo y no se indicó).
+        InvarianteViolado: al calcular, si `canasta.version` no es 2025, si
+            `agregacion` no es válida, si `rubro` no es válido para el
+            `recorte` de `serie` (o es ambiguo y no se indicó), o si
+            `referencia` no tiene un manifiesto con `version=2019` y la
+            MISMA `agregacion`/`rubro`/`sin_petroleo` que se está pidiendo.
         VersionNoCoincide: `serie` trae metadata de versión (`cargar_serie`) y
             no coincide con `canasta.version`.
         CanastaSinGenericos: tras filtrar pesos NaN/0 (y el 070 si
             `sin_petroleo=True`), no queda ningún genérico utilizable.
         ErrorCalculo: a `serie` le faltan genéricos que el grupo necesita; la
             columna de encadenamiento del `recorte` está totalmente vacía
-            (canasta generada sin `--encadenamientos`); `serie_anterior` no
-            tiene el periodo de traslape; o algún grupo de `agregacion` no
+            (canasta generada sin `--encadenamientos`); `referencia` no
+            cubre el periodo de traslape; o algún grupo de `agregacion` no
             tiene `factor_h` en el tramo anterior (reclasificación de
             agrupación entre 2019 y 2025 — fuera de alcance salvo para
             SECTOR/INPP/MERCANCIAS_SERVICIOS, que usan código estable).
     """
 
-    def __init__(self, canasta_anterior: CanastaINPP, serie_anterior: SerieNormalizada) -> None:
-        if canasta_anterior.version != 2019:
-            raise InvarianteViolado(
-                "LaspeyresEncadenado requiere canasta_anterior.version=2019; recibió "
-                f"{canasta_anterior.version}"
-            )
-        self._canasta_anterior = canasta_anterior
-        self._serie_anterior = serie_anterior
+    def __init__(self, referencia: ResultadoIndice) -> None:
+        self._referencia = referencia
 
     def calcular(
         self,
@@ -228,17 +231,48 @@ class LaspeyresEncadenado(CalculadorBase):
         i_tramo = _laspeyres_por_grupo(df_base, ponderador, categoria_por_generico)
 
         # factor_h = I_viejo(traslape)/100, MISMO agregacion/rubro/sin_petroleo pero
-        # con la canasta/serie 2019 -- ver docstring de la clase. Cálculo 100%
-        # independiente del de arriba, nunca cruza código de genérico entre versiones.
+        # con canasta.version=2019 -- ver docstring de la clase. `referencia` ya
+        # viene calculado (no se recalcula acá), nunca cruza código de genérico
+        # entre versiones.
+        manifiestos_referencia = [
+            m
+            for m in self._referencia.manifiesto
+            if m.version == 2019
+            and m.agregacion == agregacion
+            and m.rubro == rubro
+            and m.sin_petroleo == sin_petroleo
+        ]
+        if len(manifiestos_referencia) != 1:
+            raise InvarianteViolado(
+                f"referencia no tiene un manifiesto único con version=2019, agregacion="
+                f"'{agregacion}', rubro='{rubro}', sin_petroleo={sin_petroleo} -- tiene "
+                f"{len(manifiestos_referencia)}. referencia debe venir de calcular_indice/"
+                "LaspeyresDirecto con la MISMA combinación que se pide acá."
+            )
+
+        # Filtra ANTES de pivotear: `referencia` puede traer más de un manifiesto
+        # (p.ej. otra version/agregacion/rubro, cada uno con sus propias filas,
+        # válido por el invariante de ResultadoIndice) -- sin este filtro, `.ancho`
+        # apila filas de TODOS los manifiestos bajo la misma etiqueta de `indice`, y
+        # un periodo que solo existe en un manifiesto ajeno se coló como si fuera
+        # del manifiesto que ya validamos arriba (regresión real, confirmada con un
+        # `ResultadoIndice` de 2 manifiestos por índices públicos, sin mutar nada
+        # privado -- ver test_referencia_con_manifiesto_ajeno_en_traslape_lanza_error_calculo).
         traslape = RANGOS_CANASTAS[canasta.version][0]
-        resultado_anterior = LaspeyresDirecto().calcular(
-            self._canasta_anterior, self._serie_anterior, agregacion, rubro, sin_petroleo
+        largo_referencia = self._referencia.resultado.largo
+        filtro_manifiesto = (
+            (largo_referencia["version"] == 2019)
+            & (largo_referencia["agregacion"] == agregacion)
+            & (largo_referencia["rubro"] == rubro)
         )
-        ancho_anterior = resultado_anterior.resultado.ancho
+        ancho_anterior = largo_referencia.loc[filtro_manifiesto, "indice_replicado"].unstack(
+            "periodo"
+        )
         if traslape not in ancho_anterior.columns:
             raise ErrorCalculo(
-                f"La canasta/serie anterior no tiene el periodo de traslape {traslape} -- "
-                "no se puede calcular factor_h."
+                f"referencia no tiene el periodo de traslape {traslape} dentro del manifiesto "
+                f"version=2019/agregacion='{agregacion}'/rubro='{rubro}' -- no se puede "
+                "calcular factor_h."
             )
         factor_h_total = ancho_anterior[traslape].astype(float) / 100
         grupos_del_resultado = pd.Index(i_tramo.index)

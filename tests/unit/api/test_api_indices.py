@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -12,6 +13,7 @@ from replica_inpp.dominio.modelos.canasta import CanastaINPP
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.modelos.serie import SerieNormalizada
 from replica_inpp.dominio.periodos import PeriodoMensual
+from replica_inpp.dominio.tipos import VersionCanasta
 
 _PERIODOS = [PeriodoMensual(2019, 7), PeriodoMensual(2019, 8)]
 _GENERICOS = ["001", "070", "339", "460"]
@@ -48,7 +50,7 @@ def _canasta() -> CanastaINPP:
     return CanastaINPP(df, 2019)
 
 
-def _serie() -> SerieNormalizada:
+def _serie(recorte: Any = "produccion_total") -> SerieNormalizada:
     df = pd.DataFrame(
         {
             "generico": ["soya", "petroleo", "acero", "transporte"],
@@ -57,7 +59,7 @@ def _serie() -> SerieNormalizada:
         },
         index=_GENERICOS,
     )
-    return SerieNormalizada(df, "produccion_total")
+    return SerieNormalizada(df, recorte)
 
 
 def test_calcular_indice_retorna_resultado_indice() -> None:
@@ -165,11 +167,13 @@ def test_calcular_indice_sin_metadata_de_version_no_valida() -> None:
 # deje de propagar CanastaSinGenericos) sí quede detectada.
 
 
-# -- canasta 2025 rechazada: la fachada todavía no expone LaspeyresEncadenado
-# (negociación 2026-08-30) -- calcular_indice calculaba en silencio con
-# LaspeyresDirecto sobre canasta 2025, dando un número incorrecto (mezcla la
-# serie 2025, en escala absoluta continua de 2019, con ponderadores 2025) sin
-# avisar. Ver dominio/calculo/laspeyres_encadenado.py::LaspeyresEncadenado.
+# -- canasta 2025 rechazada sin `referencia` (negociación 2026-08-30) --
+# calcular_indice calculaba en silencio con LaspeyresDirecto sobre canasta
+# 2025, dando un número incorrecto (mezcla la serie 2025, en escala absoluta
+# continua de 2019, con ponderadores 2025) sin avisar. Ahora despacha a
+# LaspeyresEncadenado para canasta.version=2025 (ver test de despacho más
+# abajo), pero sigue exigiendo `referencia` explícita -- sin ella, rechaza.
+# Ver dominio/calculo/laspeyres_encadenado.py::LaspeyresEncadenado.
 
 
 def test_calcular_indice_canasta_2025_lanza_invariante_violado() -> None:
@@ -191,6 +195,182 @@ def test_rep_calcular_indice_canasta_2025_lanza_invariante_violado() -> None:
     canasta_2025 = CanastaINPP(df, 2025)
     with pytest.raises(InvarianteViolado, match="LaspeyresEncadenado"):
         rep.calcular_indice(canasta_2025, _serie(), "INPP", rubro="produccion_total")
+
+
+def test_calcular_indice_canasta_2025_despacha_a_laspeyres_encadenado() -> None:
+    canasta_anterior = _canasta()  # version 2019, encadenamiento vacío (como debe ser en 2019)
+
+    traslape = PeriodoMensual(2025, 7)
+    serie_anterior = SerieNormalizada(
+        pd.DataFrame(
+            {"generico": ["soya", "petroleo", "acero", "transporte"], traslape: [100.0] * 4},
+            index=_GENERICOS,
+        ),
+        "produccion_total",
+    )
+    # `referencia`: el ResultadoIndice de la MISMA combinación (INPP/
+    # produccion_total/sin_petroleo=False) ya calculado con canasta 2019 --
+    # típicamente sale de una llamada previa a `calcular_indice`.
+    referencia = rep.calcular_indice(
+        canasta_anterior, serie_anterior, "INPP", rubro="produccion_total"
+    )
+
+    df_2025 = _canasta().df.copy()
+    columnas_encadenamiento = [
+        "encadenamiento total",
+        "encadenamiento produccion nacional",
+        "encadenamiento exportacion",
+        "encadenamiento uso final",
+    ]
+    df_2025[columnas_encadenamiento] = 1.0
+    canasta_2025 = CanastaINPP(df_2025, 2025)
+
+    serie_2025 = SerieNormalizada(
+        pd.DataFrame(
+            {"generico": ["soya", "petroleo", "acero", "transporte"], traslape: [100.0] * 4},
+            index=_GENERICOS,
+        ),
+        "produccion_total",
+    )
+
+    r = rep.calcular_indice(
+        canasta_2025,
+        serie_2025,
+        "INPP",
+        rubro="produccion_total",
+        referencia=referencia,
+    )
+    assert r.manifiesto[0].calculador == "LaspeyresEncadenado"
+    assert r.manifiesto[0].version == 2025
+
+
+def test_calcular_indice_canasta_2025_sin_petroleo_via_fachada() -> None:
+    # Recorrido completo vía `rep.calcular_indice` (no `LaspeyresEncadenado`
+    # directo) con `sin_petroleo=True` y pesos DISTINTOS entre canasta anterior
+    # (25/25/25/25) y nueva (10/20/30/40) -- mismo escenario ya probado en
+    # dominio/calculo/test_calculo_laspeyres_encadenado.py
+    # ::test_sin_petroleo_excluye_070_de_i_tramo_y_de_factor_h, ahora atravesando
+    # la fachada completa (incluida la construcción de `referencia` con
+    # sin_petroleo=True vía `rep.calcular_indice`). Un mutante que reenvíe
+    # siempre `sin_petroleo=False` al despachar a `LaspeyresEncadenado` hace que
+    # el filtro de manifiesto no encuentre a `referencia` (construida con
+    # sin_petroleo=True) y explote, o -- si además se mutara la construcción de
+    # `referencia` -- que el valor numérico deje de coincidir con el oráculo.
+    traslape = PeriodoMensual(2025, 7)
+    periodos_nuevos = [traslape, PeriodoMensual(2025, 8), PeriodoMensual(2025, 9)]
+
+    def _canasta_pesos(pesos: list[float], version: VersionCanasta) -> CanastaINPP:
+        encadenamiento: list[float | None] = (
+            [2.0, 1.5, 1.2, 1.1] if version == 2025 else [None, None, None, None]
+        )
+        df = pd.DataFrame(
+            {
+                "generico": ["soya", "petroleo", "acero", "transporte"],
+                "codigo sector": ["11", "21", "31", "48"],
+                "sector": ["11", "21", "31", "48"],
+                "codigo subsector": ["111", "211", "311", "481"],
+                "subsector": ["111", "211", "311", "481"],
+                "codigo rama": ["1111", "2111", "3111", "4811"],
+                "rama": ["1111", "2111", "3111", "4811"],
+                "codigo subrama": ["11111", "21111", "31111", "48111"],
+                "subrama": ["11111", "21111", "31111", "48111"],
+                "codigo clase": ["111111", "211111", "311111", "481111"],
+                "clase": ["111111", "211111", "311111", "481111"],
+                "produccion total": pesos,
+                "bienes intermedios": pesos,
+                "bienes finales": pesos,
+                "demanda interna total": pesos,
+                "demanda interna consumo": pesos,
+                "demanda interna capital": pesos,
+                "exportaciones": pesos,
+                "encadenamiento total": encadenamiento,
+                "encadenamiento produccion nacional": encadenamiento,
+                "encadenamiento exportacion": encadenamiento,
+                "encadenamiento uso final": encadenamiento,
+            },
+            index=_GENERICOS,
+        )
+        return CanastaINPP(df, version)
+
+    canasta_anterior = _canasta_pesos([25.0, 25.0, 25.0, 25.0], 2019)
+    canasta_2025 = _canasta_pesos([10.0, 20.0, 30.0, 40.0], 2025)
+
+    serie_anterior = SerieNormalizada(
+        pd.DataFrame(
+            {
+                "generico": ["soya", "petroleo", "acero", "transporte"],
+                traslape: [130.0, 90.0, 115.0, 105.0],
+            },
+            index=_GENERICOS,
+        ),
+        "produccion_total",
+    )
+    serie_2025 = SerieNormalizada(
+        pd.DataFrame(
+            {
+                "generico": ["soya", "petroleo", "acero", "transporte"],
+                periodos_nuevos[0]: [200.0, 150.0, 120.0, 110.0],
+                periodos_nuevos[1]: [204.0, 165.0, 126.0, 111.1],
+                periodos_nuevos[2]: [208.0, 180.0, 129.6, 113.3],
+            },
+            index=_GENERICOS,
+        ),
+        "produccion_total",
+    )
+
+    referencia = rep.calcular_indice(
+        canasta_anterior, serie_anterior, "INPP", rubro="produccion_total", sin_petroleo=True
+    )
+    r = rep.calcular_indice(
+        canasta_2025,
+        serie_2025,
+        "INPP",
+        rubro="produccion_total",
+        sin_petroleo=True,
+        referencia=referencia,
+    )
+
+    # oráculo: i_tramo sin petróleo (pesos NUEVOS 10/30/40, soya/acero/transporte,
+    # renormalizados sobre 80) x factor_h sin petróleo (pesos VIEJOS iguales
+    # 25/25/25 -> promedio simple de soya/acero/transporte) -- derivación
+    # completa en el test de dominio referenciado arriba.
+    esperado = [116.6666667, 119.7291667, 122.5]
+    assert list(r.resultado.ancho.loc["INPP"]) == pytest.approx(esperado)
+    assert r.manifiesto[0].sin_petroleo is True
+
+
+def test_calcular_indice_canasta_2025_referencia_combinacion_distinta_lanza_invariante_violado() -> (
+    None
+):
+    # referencia calculada para "bienes_intermedios" (recorte mercado_nacional),
+    # se pide "produccion_total" -- no coincide, debe rechazarse en vez de dar
+    # un factor_h equivocado.
+    referencia = rep.calcular_indice(
+        _canasta(), _serie("mercado_nacional"), "INPP", rubro="bienes_intermedios"
+    )
+
+    traslape = PeriodoMensual(2025, 7)
+    df_2025 = _canasta().df.copy()
+    columnas_encadenamiento = [
+        "encadenamiento total",
+        "encadenamiento produccion nacional",
+        "encadenamiento exportacion",
+        "encadenamiento uso final",
+    ]
+    df_2025[columnas_encadenamiento] = 1.0
+    canasta_2025 = CanastaINPP(df_2025, 2025)
+    serie_2025 = SerieNormalizada(
+        pd.DataFrame(
+            {"generico": ["soya", "petroleo", "acero", "transporte"], traslape: [100.0] * 4},
+            index=_GENERICOS,
+        ),
+        "produccion_total",
+    )
+
+    with pytest.raises(InvarianteViolado, match="rubro='produccion_total'"):
+        rep.calcular_indice(
+            canasta_2025, serie_2025, "INPP", rubro="produccion_total", referencia=referencia
+        )
 
 
 def test_calcular_indice_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos() -> None:

@@ -132,9 +132,12 @@ def test_agregacion_inpp_no_se_toca_por_normalizacion() -> None:
 # ---------- rubro: inferencia y validación contra recorte ----------
 
 
-def test_rubro_ambiguo_sin_indicar_lanza_invariante_violado() -> None:
-    with pytest.raises(InvarianteViolado, match="admite varios rubros"):
-        LaspeyresDirecto().calcular(_canasta(), _serie("produccion_total"), "INPP")
+def test_rubro_se_infiere_para_produccion_total() -> None:
+    # produccion_total dejó de ser ambiguo (bienes_intermedios se movió a
+    # mercado_nacional, 2026-08-30) -- ahora se infiere solo, igual que
+    # bienes_finales/mercado_exportacion.
+    r = LaspeyresDirecto().calcular(_canasta(), _serie("produccion_total"), "INPP")
+    assert r.manifiesto[0].rubro == "produccion_total"
 
 
 def test_rubro_invalido_para_recorte_lanza_invariante_violado() -> None:
@@ -211,8 +214,11 @@ def test_mercancias_servicios_agrupa_correcto() -> None:
 
 def test_peso_exactamente_cero_excluye_generico_del_grupo() -> None:
     # bienes_intermedios: petróleo ("21") y transporte ("48") pesan 0 -- deben
-    # quedar FUERA del grupo entero, no aparecer como fila NaN.
-    r = LaspeyresDirecto().calcular(_canasta(), _serie(), "SECTOR", rubro="bienes_intermedios")
+    # quedar FUERA del grupo entero, no aparecer como fila NaN. rubro válido
+    # para recorte mercado_nacional (movido de produccion_total, 2026-08-30).
+    r = LaspeyresDirecto().calcular(
+        _canasta(), _serie("mercado_nacional"), "SECTOR", rubro="bienes_intermedios"
+    )
     assert set(r.resultado.ancho.index) == {"11", "31"}
 
 
@@ -220,7 +226,9 @@ def test_peso_cero_no_exige_cobertura_de_serie() -> None:
     # la serie NO trae a petróleo/transporte -- no debe fallar: su peso en
     # "bienes intermedios" es 0, no participan de este rubro.
     canasta = _canasta()
-    serie_incompleta = SerieNormalizada(_serie().df.drop(index=["070", "460"]), "produccion_total")
+    serie_incompleta = SerieNormalizada(
+        _serie("mercado_nacional").df.drop(index=["070", "460"]), "mercado_nacional"
+    )
     r = LaspeyresDirecto().calcular(canasta, serie_incompleta, "INPP", rubro="bienes_intermedios")
     assert (r.resultado.largo["estado_calculo"] == "ok").all()
 
