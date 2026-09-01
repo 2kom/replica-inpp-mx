@@ -18,13 +18,13 @@ def _manifiesto(
     version: int = 2019,
     agregacion: str = "INPP",
     rubro: str = "produccion_total",
-    sin_petroleo: bool = False,
+    incluir_petroleo: bool = True,
 ) -> ManifestCalculo:
     return ManifestCalculo(
         version=version,  # type: ignore[arg-type]
         agregacion=agregacion,
         rubro=rubro,
-        sin_petroleo=sin_petroleo,
+        incluir_petroleo=incluir_petroleo,
         calculador="LaspeyresDirecto",
         ruta_canasta=Path("/tmp/c.csv"),
         ruta_series=Path("/tmp/s.csv"),
@@ -112,13 +112,14 @@ def test_manifiesto_sin_filas_por_rubro_falla() -> None:
         ResultadoIndice(df, [huerfano], _reporte_vacio(), _diagnostico_vacio())
 
 
-def test_manifiesto_sin_petroleo_no_se_valida_contra_columna() -> None:
-    # sin_petroleo no vive en df_resultado — un manifiesto con sin_petroleo=True
-    # contra un df que no lo distingue de ningún modo no debe fallar por eso.
+def test_manifiesto_incluir_petroleo_no_se_valida_contra_columna() -> None:
+    # incluir_petroleo no vive en df_resultado — un manifiesto con
+    # incluir_petroleo=False contra un df que no lo distingue de ningún modo
+    # no debe fallar por eso.
     df = _df_indice()
-    m = _manifiesto(sin_petroleo=True)
+    m = _manifiesto(incluir_petroleo=False)
     r = ResultadoIndice(df, [m], _reporte_vacio(), _diagnostico_vacio())
-    assert r.manifiesto[0].sin_petroleo is True
+    assert r.manifiesto[0].incluir_petroleo is False
 
 
 def test_fila_huerfana_sin_manifiesto_falla() -> None:
@@ -133,10 +134,10 @@ def test_fila_huerfana_sin_manifiesto_falla() -> None:
 
 def test_manifiestos_duplicados_por_version_agregacion_rubro_falla() -> None:
     # 2 manifiestos con la misma (version, agregacion, rubro) pero distinto
-    # sin_petroleo apuntarían a las mismas filas sin que nada los distinga.
+    # incluir_petroleo apuntarían a las mismas filas sin que nada los distinga.
     df = _df_indice()
-    m1 = _manifiesto(sin_petroleo=False)
-    m2 = _manifiesto(sin_petroleo=True)
+    m1 = _manifiesto(incluir_petroleo=True)
+    m2 = _manifiesto(incluir_petroleo=False)
     with pytest.raises(InvarianteViolado):
         ResultadoIndice(df, [m1, m2], _reporte_vacio(), _diagnostico_vacio())
 
@@ -210,7 +211,10 @@ def test_resumen_una_fila_por_manifiesto() -> None:
 
 def test_resumen_clave_marca_sin_petroleo() -> None:
     r = ResultadoIndice(
-        _df_indice(), [_manifiesto(sin_petroleo=True)], _reporte_vacio(), _diagnostico_vacio()
+        _df_indice(),
+        [_manifiesto(incluir_petroleo=False)],
+        _reporte_vacio(),
+        _diagnostico_vacio(),
     )
     assert list(r.resumen.index) == ["2019:INPP:produccion_total:sin_petroleo"]
 

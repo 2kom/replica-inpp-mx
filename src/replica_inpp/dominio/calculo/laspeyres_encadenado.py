@@ -65,7 +65,7 @@ class LaspeyresEncadenado(CalculadorBase):
     2. Agregar `df_base` con las ponderaciones 2025 (`_laspeyres_por_grupo`)
        → `i_tramo`, el índice en su propia escala local.
     3. Encadenar de vuelta a escala absoluta con `factor_h = I_viejo(traslape)
-       / 100` — el índice de la MISMA `agregacion`/`rubro`/`sin_petroleo`,
+       / 100` — el índice de la MISMA `agregacion`/`rubro`/`incluir_petroleo`,
        tomado de `referencia` (el `ResultadoIndice` de esa combinación con
        `canasta.version=2019`, ya calculado con `LaspeyresDirecto` — p.ej. vía
        `api/indices.py::calcular_indice`), evaluado en el periodo de
@@ -90,22 +90,22 @@ class LaspeyresEncadenado(CalculadorBase):
 
     Args:
         referencia: `ResultadoIndice` de la MISMA `agregacion`/`rubro`/
-            `sin_petroleo` que se le pedirá a `calcular`, calculado con
+            `incluir_petroleo` que se le pedirá a `calcular`, calculado con
             `canasta.version=2019` (típicamente `LaspeyresDirecto` vía
             `calcular_indice`) y que cubra el periodo de traslape (jul-2025).
             Se valida recién en `calcular`, porque `agregacion`/`rubro`/
-            `sin_petroleo` no se conocen hasta esa llamada.
+            `incluir_petroleo` no se conocen hasta esa llamada.
 
     Raises:
         InvarianteViolado: al calcular, si `canasta.version` no es 2025, si
             `agregacion` no es válida, si `rubro` no es válido para el
             `recorte` de `serie` (o es ambiguo y no se indicó), o si
             `referencia` no tiene un manifiesto con `version=2019` y la
-            MISMA `agregacion`/`rubro`/`sin_petroleo` que se está pidiendo.
+            MISMA `agregacion`/`rubro`/`incluir_petroleo` que se está pidiendo.
         VersionNoCoincide: `serie` trae metadata de versión (`cargar_serie`) y
             no coincide con `canasta.version`.
         CanastaSinGenericos: tras filtrar pesos NaN/0 (y el 070 si
-            `sin_petroleo=True`), no queda ningún genérico utilizable.
+            `incluir_petroleo=False`), no queda ningún genérico utilizable.
         ErrorCalculo: a `serie` le faltan genéricos que el grupo necesita; la
             columna de encadenamiento del `recorte` está totalmente vacía
             (canasta generada sin `--encadenamientos`); `referencia` no
@@ -124,7 +124,8 @@ class LaspeyresEncadenado(CalculadorBase):
         serie: SerieNormalizada,
         agregacion: str,
         rubro: str | None = None,
-        sin_petroleo: bool = False,
+        *,
+        incluir_petroleo: bool = True,
     ) -> ResultadoIndice:
         fecha = datetime.now()
         ruta_canasta = canasta.df.attrs.get("origen")
@@ -167,15 +168,15 @@ class LaspeyresEncadenado(CalculadorBase):
         ponderador = canasta.df[columna_peso].dropna().astype(float)
         ponderador = ponderador[ponderador != 0]
 
-        if sin_petroleo:
+        if not incluir_petroleo:
             ponderador = ponderador.drop(index=CODIGO_PETROLEO_CRUDO, errors="ignore")
 
         if ponderador.empty:
             raise CanastaSinGenericos(
                 f"la canasta no tiene genéricos utilizables para rubro='{rubro}'"
-                + (" con sin_petroleo=True" if sin_petroleo else "")
+                + (" con incluir_petroleo=False" if not incluir_petroleo else "")
                 + " -- todos los pesos son 0, NaN, o el único genérico con peso era el 070 "
-                "(Petróleo crudo), excluido por sin_petroleo."
+                "(Petróleo crudo), excluido por incluir_petroleo=False."
             )
 
         # f_j sale del RECORTE de la serie, no del rubro -- varios rubros comparten
@@ -230,7 +231,7 @@ class LaspeyresEncadenado(CalculadorBase):
 
         i_tramo = _laspeyres_por_grupo(df_base, ponderador, categoria_por_generico)
 
-        # factor_h = I_viejo(traslape)/100, MISMO agregacion/rubro/sin_petroleo pero
+        # factor_h = I_viejo(traslape)/100, MISMO agregacion/rubro/incluir_petroleo pero
         # con canasta.version=2019 -- ver docstring de la clase. `referencia` ya
         # viene calculado (no se recalcula acá), nunca cruza código de genérico
         # entre versiones.
@@ -240,12 +241,12 @@ class LaspeyresEncadenado(CalculadorBase):
             if m.version == 2019
             and m.agregacion == agregacion
             and m.rubro == rubro
-            and m.sin_petroleo == sin_petroleo
+            and m.incluir_petroleo == incluir_petroleo
         ]
         if len(manifiestos_referencia) != 1:
             raise InvarianteViolado(
                 f"referencia no tiene un manifiesto único con version=2019, agregacion="
-                f"'{agregacion}', rubro='{rubro}', sin_petroleo={sin_petroleo} -- tiene "
+                f"'{agregacion}', rubro='{rubro}', incluir_petroleo={incluir_petroleo} -- tiene "
                 f"{len(manifiestos_referencia)}. referencia debe venir de calcular_indice/"
                 "LaspeyresDirecto con la MISMA combinación que se pide acá."
             )
@@ -430,7 +431,7 @@ class LaspeyresEncadenado(CalculadorBase):
             version=canasta.version,
             agregacion=agregacion,
             rubro=rubro,
-            sin_petroleo=sin_petroleo,
+            incluir_petroleo=incluir_petroleo,
             calculador="LaspeyresEncadenado",
             ruta_canasta=ruta_canasta,
             ruta_series=ruta_serie,

@@ -170,7 +170,7 @@ class ManifestCalculo:
     version: VersionCanasta
     agregacion: str
     rubro: str
-    sin_petroleo: bool
+    incluir_petroleo: bool
     calculador: Literal["LaspeyresDirecto", "LaspeyresEncadenado"]
     ruta_canasta: Path | None = None
     ruta_series: Path | None = None

@@ -15,7 +15,8 @@ def calcular_indice(
     serie: SerieNormalizada,
     agregacion: str,
     rubro: str | None = None,
-    sin_petroleo: bool = False,
+    *,
+    incluir_petroleo: bool = True,
     referencia: ResultadoIndice | None = None,
 ) -> ResultadoIndice:
     """Calcula el índice de una agregación/rubro de la canasta del INPP.
@@ -23,7 +24,7 @@ def calcular_indice(
     Envuelve `LaspeyresDirecto` (Etapa 2, sin encadenar) para `canasta.version`
     2012/2019. Para `canasta.version == 2025` despacha a `LaspeyresEncadenado`
     (Etapa 3, encadenamiento) en su lugar — requiere `referencia`, el
-    `ResultadoIndice` de la MISMA `agregacion`/`rubro`/`sin_petroleo` ya
+    `ResultadoIndice` de la MISMA `agregacion`/`rubro`/`incluir_petroleo` ya
     calculado con `canasta.version=2019` (típicamente con una llamada previa
     a `calcular_indice`), del que sale `factor_h`. Sin `referencia`, rechaza
     el cálculo en vez de calcular con `LaspeyresDirecto` sobre 2025: eso daría
@@ -46,19 +47,20 @@ def calcular_indice(
             `demanda_interna_capital`, `bienes_intermedios`) y exige
             indicarlo a mano — ver `dominio/tipos.py::RUBROS_POR_RECORTE`
             para el resto del mapeo.
-        sin_petroleo: excluye el genérico `070` (Petróleo crudo) antes de
-            agrupar, sin normalizar aparte — la propia división `Σ(w·índice)/
-            Σw` ya renormaliza sobre los genéricos restantes.
+        incluir_petroleo: si `False`, excluye el genérico `070` (Petróleo
+            crudo) antes de agrupar, sin normalizar aparte — la propia
+            división `Σ(w·índice)/Σw` ya renormaliza sobre los genéricos
+            restantes.
         referencia: solo si `canasta.version == 2025` — `ResultadoIndice` de
-            la MISMA `agregacion`/`rubro`/`sin_petroleo`, con `canasta.version
-            =2019` y que cubra el periodo de traslape (jul-2025). Ignorado si
-            `canasta.version != 2025`.
+            la MISMA `agregacion`/`rubro`/`incluir_petroleo`, con
+            `canasta.version=2019` y que cubra el periodo de traslape
+            (jul-2025). Ignorado si `canasta.version != 2025`.
 
     Raises:
         InvarianteViolado: `canasta.version == 2025` sin `referencia` (es
             obligatoria en ese caso); `referencia` sin un manifiesto con
-            `version=2019` y la MISMA `agregacion`/`rubro`/`sin_petroleo` que
-            se pide acá (ver
+            `version=2019` y la MISMA `agregacion`/`rubro`/`incluir_petroleo`
+            que se pide acá (ver
             `dominio/calculo/laspeyres_encadenado.py::LaspeyresEncadenado`);
             `agregacion` no es válida; o `rubro` no es válido para el
             `recorte` de `serie` (o es ambiguo y no se indicó).
@@ -66,7 +68,7 @@ def calcular_indice(
             metadata) y su versión no coincide con `canasta.version`. No se
             valida si `serie` se construyó a mano, sin esa metadata.
         CanastaSinGenericos: tras filtrar pesos NaN/0 (y el 070 si
-            `sin_petroleo=True`), no queda ningún genérico utilizable.
+            `incluir_petroleo=False`), no queda ningún genérico utilizable.
         ErrorCalculo: a la serie le faltan genéricos que el grupo necesita, no
             tiene ningún periodo dentro del rango vigente de la versión, hay
             desbordamiento al ponderar la serie, o (solo `canasta.version ==
@@ -78,11 +80,17 @@ def calcular_indice(
         if referencia is None:
             raise InvarianteViolado(
                 "calcular_indice con canasta.version=2025 requiere 'referencia' -- el "
-                "ResultadoIndice de la misma agregacion/rubro/sin_petroleo ya calculado con "
+                "ResultadoIndice de la misma agregacion/rubro/incluir_petroleo ya calculado con "
                 "canasta.version=2019, del que LaspeyresEncadenado saca factor_h (ver "
                 "dominio/calculo/laspeyres_encadenado.py)."
             )
         return LaspeyresEncadenado(referencia).calcular(
-            canasta, serie, agregacion, rubro, sin_petroleo
+            canasta,
+            serie,
+            agregacion,
+            rubro=rubro,
+            incluir_petroleo=incluir_petroleo,
         )
-    return LaspeyresDirecto().calcular(canasta, serie, agregacion, rubro, sin_petroleo)
+    return LaspeyresDirecto().calcular(
+        canasta, serie, agregacion, rubro=rubro, incluir_petroleo=incluir_petroleo
+    )

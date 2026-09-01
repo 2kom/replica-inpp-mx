@@ -57,7 +57,8 @@ class LaspeyresDirecto(CalculadorBase):
         serie: SerieNormalizada,
         agregacion: str,
         rubro: str | None = None,
-        sin_petroleo: bool = False,
+        *,
+        incluir_petroleo: bool = True,
     ) -> ResultadoIndice:
         fecha = datetime.now()
         ruta_canasta = canasta.df.attrs.get("origen")
@@ -117,7 +118,7 @@ class LaspeyresDirecto(CalculadorBase):
         ponderador = canasta.df[columna_peso].dropna().astype(float)
         ponderador = ponderador[ponderador != 0]
 
-        if sin_petroleo:
+        if not incluir_petroleo:
             # Solo excluir del grupo basta: _laspeyres_por_grupo divide entre
             # Σponderador del grupo, que ya no incluye el 070 — la renormalización
             # queda implícita en esa división, sin paso aparte.
@@ -126,9 +127,9 @@ class LaspeyresDirecto(CalculadorBase):
         if ponderador.empty:
             raise CanastaSinGenericos(
                 f"la canasta no tiene genéricos utilizables para rubro='{rubro}'"
-                + (" con sin_petroleo=True" if sin_petroleo else "")
+                + (" con incluir_petroleo=False" if not incluir_petroleo else "")
                 + " -- todos los pesos son 0, NaN, o el único genérico con peso era el 070 "
-                "(Petróleo crudo), excluido por sin_petroleo."
+                "(Petróleo crudo), excluido por incluir_petroleo=False."
             )
 
         nombres: pd.Series | None = None
@@ -247,7 +248,7 @@ class LaspeyresDirecto(CalculadorBase):
             version=canasta.version,
             agregacion=agregacion,
             rubro=rubro,
-            sin_petroleo=sin_petroleo,
+            incluir_petroleo=incluir_petroleo,
             calculador="LaspeyresDirecto",
             ruta_canasta=ruta_canasta,
             ruta_series=ruta_serie,

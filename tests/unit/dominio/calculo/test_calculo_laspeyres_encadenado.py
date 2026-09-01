@@ -133,14 +133,14 @@ def _serie_nueva(recorte: Any = "produccion_total") -> SerieNormalizada:
 def _referencia(
     agregacion: str = "INPP",
     rubro: str = "produccion_total",
-    sin_petroleo: bool = False,
+    incluir_petroleo: bool = True,
     recorte: Any = "produccion_total",
     canasta: CanastaINPP | None = None,
     serie: SerieNormalizada | None = None,
 ) -> ResultadoIndice:
     """Arma el `ResultadoIndice` de referencia (canasta.version=2019) que
     `LaspeyresEncadenado` espera -- misma combinación agregacion/rubro/
-    sin_petroleo que se le va a pedir a `calcular`, igual que haría
+    incluir_petroleo que se le va a pedir a `calcular`, igual que haría
     `calcular_indice` en la práctica.
     """
     return LaspeyresDirecto().calcular(
@@ -148,7 +148,7 @@ def _referencia(
         serie if serie is not None else _serie_anterior(recorte),
         agregacion,
         rubro=rubro,
-        sin_petroleo=sin_petroleo,
+        incluir_petroleo=incluir_petroleo,
     )
 
 
@@ -176,14 +176,14 @@ def test_valores_inpp_usa_peso_de_canasta_anterior_para_factor_h() -> None:
 
 
 def test_manifiesto_campos_correctos() -> None:
-    r = LaspeyresEncadenado(_referencia(sin_petroleo=True)).calcular(
-        _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total", sin_petroleo=True
+    r = LaspeyresEncadenado(_referencia(incluir_petroleo=False)).calcular(
+        _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total", incluir_petroleo=False
     )
     m = r.manifiesto[0]
     assert m.version == 2025
     assert m.agregacion == "INPP"
     assert m.rubro == "produccion_total"
-    assert m.sin_petroleo is True
+    assert m.incluir_petroleo is False
     assert m.calculador == "LaspeyresEncadenado"
 
 
@@ -223,14 +223,14 @@ def test_referencia_con_manifiesto_ajeno_en_traslape_lanza_error_calculo() -> No
         version=2019,
         agregacion="INPP",
         rubro="produccion_total",
-        sin_petroleo=False,
+        incluir_petroleo=True,
         calculador="LaspeyresDirecto",
     )
     manifiesto_ajeno = ManifestCalculo(
         version=2012,
         agregacion="INPP",
         rubro="bienes_finales",
-        sin_petroleo=False,
+        incluir_petroleo=True,
         calculador="LaspeyresDirecto",
     )
     df = pd.DataFrame(
@@ -388,12 +388,12 @@ def test_grupo_sin_factor_h_en_tramo_anterior_lanza_error_calculo() -> None:
         )
 
 
-# ---------- sin_petroleo (debe excluir 070 en ambos cálculos: i_tramo y factor_h) ----------
+# ---------- incluir_petroleo=False (debe excluir 070 en ambos cálculos: i_tramo y factor_h) ----------
 
 
-def test_sin_petroleo_excluye_070_de_i_tramo_y_de_factor_h() -> None:
-    r_sin = LaspeyresEncadenado(_referencia(sin_petroleo=True)).calcular(
-        _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total", sin_petroleo=True
+def test_incluir_petroleo_false_excluye_070_de_i_tramo_y_de_factor_h() -> None:
+    r_sin = LaspeyresEncadenado(_referencia(incluir_petroleo=False)).calcular(
+        _canasta_nueva(), _serie_nueva(), "INPP", rubro="produccion_total", incluir_petroleo=False
     )
     # i_tramo sin petróleo (pesos NUEVOS 10/30/40 sobre soya/acero/transporte,
     # renormalizados sobre 80): jul=100.0, ago=(10*102+30*105+40*101)/80=102.625,
@@ -403,11 +403,11 @@ def test_sin_petroleo_excluye_070_de_i_tramo_y_de_factor_h() -> None:
     # /100 = 116.6667/100 = 1.166667
     #
     # Un mutante que excluya 070 SOLO de i_tramo (deja factor_h calculado con
-    # una referencia con sin_petroleo=False, petróleo incluido) sigue dando un
+    # una referencia con incluir_petroleo=True, petróleo incluido) sigue dando un
     # resultado != con_petroleo -- ese mutante pasaba el assert viejo
     # ("valores_con != valores_sin"). Este oráculo exacto sí lo detecta: con el
     # mutante, factor_h queda en 1.10 (ver test de arriba) y el resultado en
     # ago sería 102.625*1.10=112.8875, no 119.7291667.
     esperado = [116.6666667, 119.7291667, 122.5]
     assert list(r_sin.resultado.ancho.loc["INPP"]) == pytest.approx(esperado)
-    assert r_sin.manifiesto[0].sin_petroleo is True
+    assert r_sin.manifiesto[0].incluir_petroleo is False

@@ -60,16 +60,17 @@ class ResultadoIndice(Resultado):
         motivo_error (str | None): motivo cuando `estado_calculo` no es `ok`,
             `parcial` ni `rellenado`.
 
-    Nota sobre `sin_petroleo`: es un campo de `ManifestCalculo`, no una columna de
-    `df_resultado` — una sola corrida siempre tiene un valor fijo de
-    `sin_petroleo` (es un filtro aplicado antes de agrupar, no una categoría más
-    que coexista con otras en el mismo resultado), así que no hace falta
-    repetirlo por fila. Como `sin_petroleo` no vive en `df_resultado`, no hay
-    columna contra la cual validarlo — por eso `manifiesto` no puede repetir la
-    misma combinación `(version, agregacion, rubro)` en dos entradas (aunque
-    difieran en `sin_petroleo`): dos manifiestos así apuntarían a las mismas
-    filas sin que nada los distinga, y `.resumen` reportaría dos variantes que
-    en realidad comparten un único cálculo.
+    Nota sobre `incluir_petroleo`: es un campo de `ManifestCalculo`, no una
+    columna de `df_resultado` — una sola corrida siempre tiene un valor fijo de
+    `incluir_petroleo` (es un filtro aplicado antes de agrupar, no una
+    categoría más que coexista con otras en el mismo resultado), así que no
+    hace falta repetirlo por fila. Como `incluir_petroleo` no vive en
+    `df_resultado`, no hay columna contra la cual validarlo — por eso
+    `manifiesto` no puede repetir la misma combinación `(version, agregacion,
+    rubro)` en dos entradas (aunque difieran en `incluir_petroleo`): dos
+    manifiestos así apuntarían a las mismas filas sin que nada los distinga, y
+    `.resumen` reportaría dos variantes que en realidad comparten un único
+    cálculo.
 
     Example:
         `.resumen`:
@@ -103,7 +104,7 @@ class ResultadoIndice(Resultado):
         if len(set(combos_manifiesto)) != len(combos_manifiesto):
             raise InvarianteViolado(
                 "ResultadoIndice.manifiesto no puede tener combinaciones "
-                "(version, agregacion, rubro) repetidas — sin_petroleo no distingue "
+                "(version, agregacion, rubro) repetidas — incluir_petroleo no distingue "
                 "manifiestos porque no vive en df_resultado."
             )
         combos_df = set(
@@ -172,7 +173,7 @@ class ResultadoIndice(Resultado):
             periodo_fin = max(periodos)
             clave = (
                 f"{m.version}:{m.agregacion}:{m.rubro}:"
-                f"{'sin_petroleo' if m.sin_petroleo else 'con_petroleo'}"
+                f"{'con_petroleo' if m.incluir_petroleo else 'sin_petroleo'}"
             )
             filas.append(
                 {

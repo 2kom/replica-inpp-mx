@@ -81,9 +81,20 @@ def test_calcular_indice_delega_en_laspeyres_directo() -> None:
     assert r.manifiesto[0].calculador == "LaspeyresDirecto"
 
 
-def test_calcular_indice_propaga_sin_petroleo() -> None:
-    r = calcular_indice(_canasta(), _serie(), "INPP", rubro="produccion_total", sin_petroleo=True)
-    assert r.manifiesto[0].sin_petroleo is True
+def test_calcular_indice_propaga_incluir_petroleo() -> None:
+    r = calcular_indice(
+        _canasta(), _serie(), "INPP", rubro="produccion_total", incluir_petroleo=False
+    )
+    assert r.manifiesto[0].incluir_petroleo is False
+
+
+def test_calcular_indice_incluir_petroleo_posicional_lanza_typeerror() -> None:
+    # incluir_petroleo es keyword-only (negociación 2026-08-31): el 5º argumento
+    # posicional que en el contrato viejo era `sin_petroleo` (con semántica
+    # invertida) debe fallar explícito en vez de correr en silencio con el
+    # significado contrario -- ver data/negociaciones/2026-08-31-*.md.
+    with pytest.raises(TypeError):
+        rep.calcular_indice(_canasta(), _serie(), "INPP", "produccion_total", True)
 
 
 def test_calcular_indice_agregacion_invalida_lanza_invariante_violado() -> None:
@@ -160,11 +171,12 @@ def test_calcular_indice_sin_metadata_de_version_no_valida() -> None:
     assert isinstance(r, ResultadoIndice)
 
 
-# -- sin_petroleo deja el grupo vacío, vía la fachada pública (negociación 2026-08-27,
-# segunda ronda) -- el equivalente de dominio/calculo/test_calculo_laspeyres_directo.py
-# ::test_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos pero atravesando
-# rep.calcular_indice, para que una regresión en la fachada (que capture, transforme o
-# deje de propagar CanastaSinGenericos) sí quede detectada.
+# -- incluir_petroleo=False deja el grupo vacío, vía la fachada pública (negociación
+# 2026-08-27, segunda ronda) -- el equivalente de
+# dominio/calculo/test_calculo_laspeyres_directo.py
+# ::test_incluir_petroleo_false_deja_grupo_vacio_lanza_canasta_sin_genericos pero
+# atravesando rep.calcular_indice, para que una regresión en la fachada (que capture,
+# transforme o deje de propagar CanastaSinGenericos) sí quede detectada.
 
 
 # -- canasta 2025 rechazada sin `referencia` (negociación 2026-08-30) --
@@ -189,7 +201,7 @@ def test_rep_calcular_indice_canasta_2025_lanza_invariante_violado() -> None:
     # (negociación 2026-08-30, ronda 2) estaba justo ahí: la fachada podía volver
     # a apuntar a una implementación sin guardia y este test seguiría siendo el
     # único que lo notaría, igual que ya pasa con
-    # `test_calcular_indice_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos`
+    # `test_calcular_indice_incluir_petroleo_false_deja_grupo_vacio_lanza_canasta_sin_genericos`
     # arriba.
     df = _canasta().df.copy()
     canasta_2025 = CanastaINPP(df, 2025)
@@ -209,7 +221,7 @@ def test_calcular_indice_canasta_2025_despacha_a_laspeyres_encadenado() -> None:
         "produccion_total",
     )
     # `referencia`: el ResultadoIndice de la MISMA combinación (INPP/
-    # produccion_total/sin_petroleo=False) ya calculado con canasta 2019 --
+    # produccion_total/incluir_petroleo=True) ya calculado con canasta 2019 --
     # típicamente sale de una llamada previa a `calcular_indice`.
     referencia = rep.calcular_indice(
         canasta_anterior, serie_anterior, "INPP", rubro="produccion_total"
@@ -244,17 +256,17 @@ def test_calcular_indice_canasta_2025_despacha_a_laspeyres_encadenado() -> None:
     assert r.manifiesto[0].version == 2025
 
 
-def test_calcular_indice_canasta_2025_sin_petroleo_via_fachada() -> None:
+def test_calcular_indice_canasta_2025_incluir_petroleo_false_via_fachada() -> None:
     # Recorrido completo vía `rep.calcular_indice` (no `LaspeyresEncadenado`
-    # directo) con `sin_petroleo=True` y pesos DISTINTOS entre canasta anterior
-    # (25/25/25/25) y nueva (10/20/30/40) -- mismo escenario ya probado en
+    # directo) con `incluir_petroleo=False` y pesos DISTINTOS entre canasta
+    # anterior (25/25/25/25) y nueva (10/20/30/40) -- mismo escenario ya probado en
     # dominio/calculo/test_calculo_laspeyres_encadenado.py
-    # ::test_sin_petroleo_excluye_070_de_i_tramo_y_de_factor_h, ahora atravesando
-    # la fachada completa (incluida la construcción de `referencia` con
-    # sin_petroleo=True vía `rep.calcular_indice`). Un mutante que reenvíe
-    # siempre `sin_petroleo=False` al despachar a `LaspeyresEncadenado` hace que
+    # ::test_incluir_petroleo_false_excluye_070_de_i_tramo_y_de_factor_h, ahora
+    # atravesando la fachada completa (incluida la construcción de `referencia` con
+    # incluir_petroleo=False vía `rep.calcular_indice`). Un mutante que reenvíe
+    # siempre `incluir_petroleo=True` al despachar a `LaspeyresEncadenado` hace que
     # el filtro de manifiesto no encuentre a `referencia` (construida con
-    # sin_petroleo=True) y explote, o -- si además se mutara la construcción de
+    # incluir_petroleo=False) y explote, o -- si además se mutara la construcción de
     # `referencia` -- que el valor numérico deje de coincidir con el oráculo.
     traslape = PeriodoMensual(2025, 7)
     periodos_nuevos = [traslape, PeriodoMensual(2025, 8), PeriodoMensual(2025, 9)]
@@ -319,14 +331,18 @@ def test_calcular_indice_canasta_2025_sin_petroleo_via_fachada() -> None:
     )
 
     referencia = rep.calcular_indice(
-        canasta_anterior, serie_anterior, "INPP", rubro="produccion_total", sin_petroleo=True
+        canasta_anterior,
+        serie_anterior,
+        "INPP",
+        rubro="produccion_total",
+        incluir_petroleo=False,
     )
     r = rep.calcular_indice(
         canasta_2025,
         serie_2025,
         "INPP",
         rubro="produccion_total",
-        sin_petroleo=True,
+        incluir_petroleo=False,
         referencia=referencia,
     )
 
@@ -336,7 +352,7 @@ def test_calcular_indice_canasta_2025_sin_petroleo_via_fachada() -> None:
     # completa en el test de dominio referenciado arriba.
     esperado = [116.6666667, 119.7291667, 122.5]
     assert list(r.resultado.ancho.loc["INPP"]) == pytest.approx(esperado)
-    assert r.manifiesto[0].sin_petroleo is True
+    assert r.manifiesto[0].incluir_petroleo is False
 
 
 def test_calcular_indice_canasta_2025_referencia_combinacion_distinta_lanza_invariante_violado() -> (
@@ -373,7 +389,9 @@ def test_calcular_indice_canasta_2025_referencia_combinacion_distinta_lanza_inva
         )
 
 
-def test_calcular_indice_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos() -> None:
+def test_calcular_indice_incluir_petroleo_false_deja_grupo_vacio_lanza_canasta_sin_genericos() -> (
+    None
+):
     df = pd.DataFrame(
         {
             "generico": ["petroleo"],
@@ -409,5 +427,9 @@ def test_calcular_indice_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_generic
 
     with pytest.raises(CanastaSinGenericos):
         rep.calcular_indice(
-            canasta_solo_petroleo, serie, "INPP", rubro="produccion_total", sin_petroleo=True
+            canasta_solo_petroleo,
+            serie,
+            "INPP",
+            rubro="produccion_total",
+            incluir_petroleo=False,
         )

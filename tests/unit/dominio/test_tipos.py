@@ -193,7 +193,7 @@ def test_manifest_calculo_construccion_valida() -> None:
         version=2019,
         agregacion="INPP",
         rubro="produccion_total",
-        sin_petroleo=False,
+        incluir_petroleo=True,
         calculador="LaspeyresDirecto",
         ruta_canasta=Path("/tmp/c.csv"),
         ruta_series=Path("/tmp/s.csv"),
@@ -202,7 +202,7 @@ def test_manifest_calculo_construccion_valida() -> None:
     assert m.version == 2019
     assert m.agregacion == "INPP"
     assert m.rubro == "produccion_total"
-    assert m.sin_petroleo is False
+    assert m.incluir_petroleo is True
 
 
 def test_manifest_calculo_rutas_y_fecha_por_defecto() -> None:
@@ -211,7 +211,7 @@ def test_manifest_calculo_rutas_y_fecha_por_defecto() -> None:
         version=2019,
         agregacion="INPP",
         rubro="produccion_total",
-        sin_petroleo=False,
+        incluir_petroleo=True,
         calculador="LaspeyresDirecto",
     )
     despues = datetime.now()

@@ -106,13 +106,13 @@ def test_agregacion_invalida_lanza_invariante_violado() -> None:
 
 def test_manifiesto_campos_correctos() -> None:
     r = LaspeyresDirecto().calcular(
-        _canasta(), _serie(), "INPP", rubro="produccion_total", sin_petroleo=True
+        _canasta(), _serie(), "INPP", rubro="produccion_total", incluir_petroleo=False
     )
     m = r.manifiesto[0]
     assert m.version == 2019
     assert m.agregacion == "INPP"
     assert m.rubro == "produccion_total"
-    assert m.sin_petroleo is True
+    assert m.incluir_petroleo is False
     assert m.calculador == "LaspeyresDirecto"
 
 
@@ -181,12 +181,12 @@ def test_rubro_ambiguo_para_recorte_mercado_nacional_sin_indicar() -> None:
         LaspeyresDirecto().calcular(_canasta(), _serie("mercado_nacional"), "INPP")
 
 
-# ---------- sin_petroleo ----------
+# ---------- incluir_petroleo ----------
 
 
-def test_sin_petroleo_filtra_070_y_renormaliza_implicito() -> None:
+def test_incluir_petroleo_false_filtra_070_y_renormaliza_implicito() -> None:
     r = LaspeyresDirecto().calcular(
-        _canasta(), _serie(), "INPP", rubro="produccion_total", sin_petroleo=True
+        _canasta(), _serie(), "INPP", rubro="produccion_total", incluir_petroleo=False
     )
     valores = list(r.resultado.ancho.loc["INPP"])
     # sin 070: soya+acero+transporte, pesos iguales -> promedio simple de los 3
@@ -367,12 +367,12 @@ def test_version_serie_ausente_en_attrs_no_valida() -> None:
     assert isinstance(r, ResultadoIndice)
 
 
-# ---------- sin_petroleo deja el grupo vacío (negociación 2026-08-27) ----------
+# ---------- incluir_petroleo=False deja el grupo vacío (negociación 2026-08-27) ----------
 
 
-def test_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos() -> None:
+def test_incluir_petroleo_false_deja_grupo_vacio_lanza_canasta_sin_genericos() -> None:
     # canasta mínima donde el ÚNICO genérico con peso es el 070 (petróleo) --
-    # sin_petroleo=True lo excluye y no queda nada con qué calcular.
+    # incluir_petroleo=False lo excluye y no queda nada con qué calcular.
     df = pd.DataFrame(
         {
             "generico": ["petroleo"],
@@ -408,5 +408,5 @@ def test_sin_petroleo_deja_grupo_vacio_lanza_canasta_sin_genericos() -> None:
 
     with pytest.raises(CanastaSinGenericos):
         LaspeyresDirecto().calcular(
-            canasta_solo_petroleo, serie, "INPP", rubro="produccion_total", sin_petroleo=True
+            canasta_solo_petroleo, serie, "INPP", rubro="produccion_total", incluir_petroleo=False
         )

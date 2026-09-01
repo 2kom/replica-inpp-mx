@@ -133,7 +133,8 @@ class CalculadorBase(ABC):
         serie: SerieNormalizada,
         agregacion: str,
         rubro: str | None = None,
-        sin_petroleo: bool = False,
+        *,
+        incluir_petroleo: bool = True,
     ) -> ResultadoIndice:
         """Calcula `ResultadoIndice` para una canasta y serie dadas."""
 
