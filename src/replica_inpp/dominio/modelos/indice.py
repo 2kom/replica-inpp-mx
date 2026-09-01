@@ -4,6 +4,7 @@ import pandas as pd
 
 from replica_inpp.dominio.errores import InvarianteViolado
 from replica_inpp.dominio.modelos.base import Resultado, Vista
+from replica_inpp.dominio.periodos import PeriodoMensual
 from replica_inpp.dominio.tipos import ManifestCalculo
 
 _COLUMNAS_MINIMAS = {"version", "agregacion", "rubro", "indice_replicado", "estado_calculo"}
@@ -17,8 +18,8 @@ class ResultadoIndice(Resultado):
     Args:
         df_resultado: DataFrame con MultiIndex `(periodo, indice)` — ver Esquema abajo.
         manifiesto: Un `ManifestCalculo` por corrida elemental que compone este
-            resultado; una eventual `empalmar` (todavía sin implementar) concatenaría
-            listas sin colapsar, igual que en `replica-inpc-mx`.
+            resultado; `empalmar` (`dominio/conversion.py`) concatena listas sin
+            colapsar, igual que en `replica-inpc-mx`.
         df_reporte: DataFrame paralelo a `df_resultado` (mismo MultiIndex) con
             columnas de cobertura/calidad por fila.
         df_diagnostico: DataFrame plano, una fila por celda `(periodo, generico)`
@@ -29,6 +30,14 @@ class ResultadoIndice(Resultado):
             bare) — con `"INPP"`/`"MERCANCIAS_SERVICIOS"` o canasta solo con
             códigos, se omite (`None`): `.resultado.ancho` no agrega columna
             `nombre` en ese caso, en vez de agregarla vacía.
+        periodo_referencia: Ancla de escala — el periodo cuyo valor se fijó en
+            `valor_base` (default 100) al rebasar, y respecto del cual está
+            expresada toda la serie. `None` = resultado en escala natural del
+            cálculo (recién salido de `calcular_indice`); lo setea `rebasar()`.
+            A diferencia de `replica-inpc-mx`, este repo no tiene `_frontera`
+            (esa existe ahí para no perder precisión al promediar 2 quincenas
+            en `a_mensual` — el INPP siempre es mensual, no hay promedio que
+            perder precisión).
 
     Raises:
         InvarianteViolado: Si `manifiesto` está vacío, si `df_resultado` no trae
@@ -86,6 +95,7 @@ class ResultadoIndice(Resultado):
         df_reporte: pd.DataFrame,
         df_diagnostico: pd.DataFrame,
         nombres: pd.Series | None = None,
+        periodo_referencia: PeriodoMensual | None = None,
     ) -> None:
         if not manifiesto:
             raise InvarianteViolado("ResultadoIndice.manifiesto no puede estar vacío")
@@ -124,10 +134,15 @@ class ResultadoIndice(Resultado):
         self._df_reporte = df_reporte
         self._df_diagnostico = df_diagnostico
         self._nombres = nombres
+        self._periodo_referencia = periodo_referencia
 
     @property
     def manifiesto(self) -> list[ManifestCalculo]:
         return self._manifiesto
+
+    @property
+    def periodo_referencia(self) -> PeriodoMensual | None:
+        return self._periodo_referencia
 
     @property
     def resultado(self) -> Vista:

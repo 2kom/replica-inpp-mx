@@ -275,6 +275,27 @@ def test_lector_series_csv_real_s19(
 
 
 @pytest.mark.requires_data
+@pytest.mark.parametrize(
+    "archivo,filas_esperadas,recorte_esperado",
+    [
+        ("produccion_total/s12_h_nm_nae.CSV", 567, "produccion_total"),
+        ("produccion_total/s12_h_nm_ae.CSV", 567, "produccion_total"),
+        ("mercado_nacional/s12_h_nm.CSV", 567, "mercado_nacional"),
+        ("bienes_finales/s12_h_nm.CSV", 556, "bienes_finales"),
+        ("mercado_exportacion/s12_h_nm.CSV", 468, "mercado_exportacion"),
+    ],
+)
+def test_lector_series_csv_real_s12(
+    archivo: str, filas_esperadas: int, recorte_esperado: str
+) -> None:
+    resultado = LectorSeriesCsv().leer(DATA_DIR / archivo)
+    assert len(resultado) == filas_esperadas
+    assert resultado.attrs["recorte"] == recorte_esperado
+    assert resultado.attrs["version_detectada"] == 2012
+    assert not resultado.index.duplicated().any()
+
+
+@pytest.mark.requires_data
 def test_lector_series_csv_real_horizontal_igual_vertical() -> None:
     h = LectorSeriesCsv().leer(DATA_DIR / "mercado_nacional/s19_h_nm.CSV")
     v = LectorSeriesCsv().leer(DATA_DIR / "mercado_nacional/s19_v_nm.CSV")

@@ -174,6 +174,23 @@ def test_indice_incidencia_ausente_no_falla() -> None:
     assert "indice_incidencia" not in r.resultado.largo.columns
 
 
+def test_periodo_referencia_por_defecto_es_none() -> None:
+    r = ResultadoIndice(_df_indice(), [_manifiesto()], _reporte_vacio(), _diagnostico_vacio())
+    assert r.periodo_referencia is None
+
+
+def test_periodo_referencia_explicito_se_expone() -> None:
+    referencia = PeriodoMensual(2019, 7)
+    r = ResultadoIndice(
+        _df_indice(),
+        [_manifiesto()],
+        _reporte_vacio(),
+        _diagnostico_vacio(),
+        periodo_referencia=referencia,
+    )
+    assert r.periodo_referencia == referencia
+
+
 def test_reporte_y_diagnostico_propagados() -> None:
     rep = pd.DataFrame({"x": [1]})
     diag = pd.DataFrame({"y": [2]})

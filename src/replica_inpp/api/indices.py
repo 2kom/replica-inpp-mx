@@ -4,10 +4,13 @@ from __future__ import annotations
 
 from replica_inpp.dominio.calculo.laspeyres_directo import LaspeyresDirecto
 from replica_inpp.dominio.calculo.laspeyres_encadenado import LaspeyresEncadenado
+from replica_inpp.dominio.conversion import empalmar as _empalmar
+from replica_inpp.dominio.conversion import rebasar as _rebasar
 from replica_inpp.dominio.errores import InvarianteViolado
 from replica_inpp.dominio.modelos.canasta import CanastaINPP
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.modelos.serie import SerieNormalizada
+from replica_inpp.dominio.periodos import periodo_desde_str
 
 
 def calcular_indice(
@@ -94,3 +97,80 @@ def calcular_indice(
     return LaspeyresDirecto().calcular(
         canasta, serie, agregacion, rubro=rubro, incluir_petroleo=incluir_petroleo
     )
+
+
+def rebasar(
+    resultado: ResultadoIndice,
+    periodo_referencia: str,
+    valor_base: float = 100.0,
+) -> ResultadoIndice:
+    """Reexpresa `resultado` para que `periodo_referencia` valga `valor_base`.
+
+    Endógeno: reescala la serie propia de `resultado` (cada `indice` -- "INPP",
+    código de sector, etc. -- por separado), sin comparar contra otra versión
+    de canasta ni requerir un módulo de correspondencia de códigos entre
+    versiones. Útil para llevar el resultado de una canasta más vieja (ej.
+    2012, base Jun2012=100) a la referencia de otra (ej. Jul2019=100) antes de
+    compararlos -- a diferencia del encadenamiento 2019→2025
+    (`LaspeyresEncadenado`), este NO absorbe reclasificación de genéricos: solo
+    reescala números ya agregados por `agregacion`/`rubro`.
+
+    Args:
+        resultado: índice ya calculado (`calcular_indice`) a reexpresar.
+        periodo_referencia: `"Jul 2019"` -- texto canónico `"Mes AAAA"`.
+        valor_base: cuánto valdrá `periodo_referencia`. 100.0 por convención.
+
+    Raises:
+        PeriodoNoInterpretable: `periodo_referencia` no es un periodo mensual
+            reconocible.
+        InvarianteViolado: `valor_base` no es finito y positivo; el periodo no
+            existe en `resultado` para ningún `indice`; o el valor base de
+            algún `indice` ahí es NaN o exactamente 0.
+        ErrorCalculo: `valor_base` es finito pero produce overflow (`inf`) al
+            aplicarlo contra algún `indice_replicado` real.
+    """
+    return _rebasar(resultado, periodo_desde_str(periodo_referencia), valor_base)
+
+
+def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> ResultadoIndice:
+    """Concatena tramos de distinta versión de canasta en un único `ResultadoIndice`.
+
+    En la frontera (periodo de traslape entre versiones contiguas, ver
+    `RANGOS_CANASTAS`), el tramo anterior posee `(periodo, indice)` si esa fila
+    existe en él; si no, el posterior la aporta. Para que la frontera sea
+    numéricamente coherente, el tramo anterior normalmente necesita `rebasar`
+    antes a la escala del posterior (ej. `rebasar(resultado_2012, "Jul 2019")`
+    antes de `empalmar([resultado_2012, resultado_2019])`) -- `empalmar`
+    valida esto: compara `indice_replicado` de ambos tramos en la frontera con
+    una tolerancia interna fija, y rechaza (o advierte con `forzar=True`) si
+    no coinciden.
+
+    No normaliza `indice` (nombre/código de categoría) entre versiones -- a
+    diferencia de `replica-inpc-mx`, este repo no tiene módulo de
+    correspondencia de códigos entre versiones. Solo es seguro para
+    agregaciones donde `indice` ya es estable entre las versiones que se
+    empalman: `"INPP"` y `"SECTOR"` (código de 2 dígitos) lo son;
+    SUBSECTOR/RAMA/SUBRAMA/CLASE o genérico no están garantizados si hay
+    reclasificación SCIAN real ahí.
+
+    Args:
+        resultados: al menos 2 `ResultadoIndice`, cada uno de una versión de
+            canasta distinta, mismos `agregacion`/`rubro`/`incluir_petroleo`.
+        forzar: permite empalmar cuando `periodo_referencia` de un tramo no
+            coincide con la frontera con el siguiente, o cuando `indice_replicado`
+            difiere entre tramos en la frontera más allá de la tolerancia
+            interna (en ambos casos, `UserWarning` en vez de rechazar). Los
+            tramos recién calculados (sin rebasar) tienen
+            `periodo_referencia=None` y no disparan la primera guardia.
+
+    Raises:
+        InvarianteViolado: menos de 2 `resultados`; no todos comparten
+            `(agregacion, rubro, incluir_petroleo)`; los periodos no forman una
+            topología PATH (cada par consecutivo comparte exactamente 1
+            periodo, ninguno no consecutivo comparte alguno); un tramo trae
+            `periodo_referencia` que no coincide con la frontera sin `forzar`;
+            o `indice_replicado` de algún `indice` compartido en la frontera
+            difiere entre tramos más allá de la tolerancia interna (escala no
+            coherente -- falta `rebasar()` antes) sin `forzar`.
+    """
+    return _empalmar(resultados, forzar=forzar)
