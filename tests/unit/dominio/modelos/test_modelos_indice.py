@@ -11,7 +11,7 @@ from replica_inpp.dominio.errores import InvarianteViolado
 from replica_inpp.dominio.modelos.base import Vista
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.periodos import PeriodoMensual
-from replica_inpp.dominio.tipos import ManifestCalculo
+from replica_inpp.dominio.tipos import ManifestCalculo, VersionCanasta
 
 
 def _manifiesto(
@@ -189,6 +189,84 @@ def test_periodo_referencia_explicito_se_expone() -> None:
         periodo_referencia=referencia,
     )
     assert r.periodo_referencia == referencia
+
+
+def test_nombres_por_version_por_defecto_vacio_sin_nombres() -> None:
+    r = ResultadoIndice(_df_indice(), [_manifiesto()], _reporte_vacio(), _diagnostico_vacio())
+    assert r._nombres_por_version == {}
+
+
+def test_nombres_por_version_se_autocompleta_con_un_solo_manifiesto() -> None:
+    nombres = pd.Series({"INPP": "el nombre"})
+    r = ResultadoIndice(
+        _df_indice(),
+        [_manifiesto(version=2019)],
+        _reporte_vacio(),
+        _diagnostico_vacio(),
+        nombres=nombres,
+    )
+    assert set(r._nombres_por_version) == {2019}
+    assert r._nombres_por_version[2019] is nombres
+
+
+def test_nombres_por_version_explicito_no_se_recalcula() -> None:
+    # manifiesto y df_resultado deben tener AMBAS versiones (2012 y 2019) --
+    # ResultadoIndice exige igualdad exacta entre manifiesto y datos, así que
+    # nombres_por_version={2012, 2019} solo es válido si el manifiesto también
+    # trae las dos (ver test_nombres_por_version_version_ajena_al_manifiesto_falla
+    # para el caso donde no coincide).
+    nombres = pd.Series({"INPP": "actual"})
+    registro: dict[VersionCanasta, pd.Series] = {2012: pd.Series({"INPP": "viejo"}), 2019: nombres}
+    df = pd.concat(
+        [
+            _df_indice(version=2012, año=2012, mes_inicio=1),
+            _df_indice(version=2019, año=2019, mes_inicio=7),
+        ]
+    )
+    r = ResultadoIndice(
+        df,
+        [_manifiesto(version=2012), _manifiesto(version=2019)],
+        _reporte_vacio(),
+        _diagnostico_vacio(),
+        nombres=nombres,
+        nombres_por_version=registro,
+    )
+    assert r._nombres_por_version is registro
+
+
+def test_nombres_por_version_version_ajena_al_manifiesto_falla() -> None:
+    # hallazgo negociado 2026-09-01: nombres_por_version aceptaba cualquier
+    # clave sin comprobar que estuviera en el manifiesto -- 2012 acá no
+    # corresponde a ningún tramo real (manifiesto solo trae 2019).
+    nombres = pd.Series({"INPP": "actual"})
+    registro: dict[VersionCanasta, pd.Series] = {
+        2012: pd.Series({"INPP": "inyectado"}),
+        2019: nombres,
+    }
+    with pytest.raises(InvarianteViolado, match="2012"):
+        ResultadoIndice(
+            _df_indice(version=2019),
+            [_manifiesto(version=2019)],
+            _reporte_vacio(),
+            _diagnostico_vacio(),
+            nombres=nombres,
+            nombres_por_version=registro,
+        )
+
+
+def test_nombres_por_version_con_varios_manifiestos_sin_explicito_queda_vacio() -> None:
+    # caso de un ResultadoIndice ya empalmado (manifiesto no colapsado) construido
+    # sin pasar nombres_por_version -- no se puede inferir a qué versión pertenece
+    # `nombres`, así que queda vacío en vez de adivinar mal.
+    m1 = _manifiesto(version=2019)
+    m2 = _manifiesto(version=2025)
+    df1 = _df_indice(version=2019, año=2019, mes_inicio=7)
+    df2 = _df_indice(version=2025, año=2025, mes_inicio=7)
+    df = pd.concat([df1, df2])
+    r = ResultadoIndice(
+        df, [m1, m2], _reporte_vacio(), _diagnostico_vacio(), nombres=pd.Series({"INPP": "x"})
+    )
+    assert r._nombres_por_version == {}
 
 
 def test_reporte_y_diagnostico_propagados() -> None:

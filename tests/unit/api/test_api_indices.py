@@ -619,6 +619,15 @@ def test_empalmar_menos_de_2_propaga_invariante_violado() -> None:
         rep.empalmar([r2019])
 
 
+def test_empalmar_version_nombres_propaga_a_traves_de_la_fachada() -> None:
+    # atraviesa rep.empalmar (no _empalmar directo) para proteger el wiring del
+    # parámetro nuevo -- version_nombres=2012 no corresponde a ningún tramo de
+    # _tramo() (2019/2025), debe rechazar mencionando el parámetro.
+    r2019, r2025 = _tramo()
+    with pytest.raises(InvarianteViolado, match="version_nombres"):
+        rep.empalmar([r2019, r2025], version_nombres=2012)
+
+
 @pytest.mark.requires_data
 def test_empalmar_real_2012_rebasado_con_2019_da_serie_continua() -> None:
     # El flujo completo que motivó rebasar/empalmar: canasta 2012 (base propia

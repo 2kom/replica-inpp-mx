@@ -11,7 +11,7 @@ from replica_inpp.dominio.conversion import empalmar, rebasar
 from replica_inpp.dominio.errores import ErrorCalculo, InvarianteViolado
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.periodos import PeriodoMensual
-from replica_inpp.dominio.tipos import ManifestCalculo
+from replica_inpp.dominio.tipos import ManifestCalculo, VersionCanasta
 
 _r1 = PeriodoMensual(2012, 6)
 _r2 = PeriodoMensual(2019, 7)
@@ -41,6 +41,7 @@ def _resultado(
     con_indice_incidencia: bool = False,
     periodo_referencia: PeriodoMensual | None = None,
     nombres: pd.Series | None = None,
+    nombres_por_version: dict[VersionCanasta, pd.Series] | None = None,
 ) -> ResultadoIndice:
     """rows = (periodo, indice, valor, estado, motivo). Un solo manifiesto
     (version/agregacion/rubro) puede cubrir varios valores de `indice` -- igual
@@ -78,6 +79,7 @@ def _resultado(
         diag,
         nombres=nombres,
         periodo_referencia=periodo_referencia,
+        nombres_por_version=nombres_por_version,
     )
 
 
@@ -619,3 +621,292 @@ def test_empalmar_sin_nombres_en_ningun_tramo_no_agrega_columna() -> None:
     )
     r = empalmar([tramo_2012, tramo_2019])
     assert "nombre" not in r.resultado.ancho.columns
+
+
+# --------------------------------------------------------------------------- version_nombres
+
+
+def test_empalmar_version_nombres_prioriza_tramo_elegido() -> None:
+    # 3 tramos, cada uno con su propio nombre para "11" -- version_nombres=2012
+    # debe ganar aunque 2012 sea el tramo más VIEJO de los tres.
+    p4 = PeriodoMensual(2025, 7)
+    tramo_2012 = _resultado(
+        [(_r1, "11", 100.0, "ok", None), (_r2, "11", 100.0, "ok", None)],
+        version=2012,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "Agricultura (2012)"}),
+    )
+    tramo_2019 = _resultado(
+        [(_r2, "11", 100.0, "ok", None), (_r3, "11", 101.0, "ok", None)],
+        version=2019,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "Agricultura (2019)"}),
+    )
+    tramo_2025 = _resultado(
+        [(_r3, "11", 101.0, "ok", None), (p4, "11", 105.0, "ok", None)],
+        version=2025,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "Agricultura (2025)"}),
+    )
+    r = empalmar([tramo_2012, tramo_2019, tramo_2025], version_nombres=2012)
+    assert r.resultado.ancho.loc["11", "nombre"] == "Agricultura (2012)"
+
+
+def test_empalmar_version_nombres_fallback_en_huecos() -> None:
+    # el tramo elegido (2012) no nombra "21" -- sigue el fallback normal
+    # (cascada cronológica) entre los demás: gana 2019, el más reciente que sí lo nombra.
+    p4 = PeriodoMensual(2025, 7)
+    tramo_2012 = _resultado(
+        [(_r1, "21", 100.0, "ok", None), (_r2, "21", 100.0, "ok", None)],
+        version=2012,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "Agricultura (2012)"}),  # no nombra "21"
+    )
+    tramo_2019 = _resultado(
+        [(_r2, "21", 100.0, "ok", None), (_r3, "21", 101.0, "ok", None)],
+        version=2019,
+        agregacion="SECTOR",
+        nombres=pd.Series({"21": "Minería (2019)"}),
+    )
+    tramo_2025 = _resultado(
+        [(_r3, "21", 101.0, "ok", None), (p4, "21", 105.0, "ok", None)],
+        version=2025,
+        agregacion="SECTOR",
+    )
+    r = empalmar([tramo_2012, tramo_2019, tramo_2025], version_nombres=2012)
+    assert r.resultado.ancho.loc["21", "nombre"] == "Minería (2019)"
+
+
+def test_empalmar_version_nombres_inexistente_falla() -> None:
+    tramo_2012 = _resultado(
+        [(_r1, "INPP", 100.0, "ok", None), (_r2, "INPP", 100.0, "ok", None)], version=2012
+    )
+    tramo_2019 = _resultado(
+        [(_r2, "INPP", 100.0, "ok", None), (_r3, "INPP", 101.0, "ok", None)], version=2019
+    )
+    with pytest.raises(InvarianteViolado, match="version_nombres"):
+        empalmar([tramo_2012, tramo_2019], version_nombres=2025)
+
+
+def test_empalmar_version_nombres_none_mantiene_precedencia_del_mas_reciente() -> None:
+    # default explícito -- mismo comportamiento que no pasar el argumento.
+    tramo_2012 = _resultado(
+        [(_r1, "11", 100.0, "ok", None), (_r2, "11", 100.0, "ok", None)],
+        version=2012,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "viejo"}),
+    )
+    tramo_2019 = _resultado(
+        [(_r2, "11", 100.0, "ok", None), (_r3, "11", 101.0, "ok", None)],
+        version=2019,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "nuevo"}),
+    )
+    r = empalmar([tramo_2012, tramo_2019], version_nombres=None)
+    assert r.resultado.ancho.loc["11", "nombre"] == "nuevo"
+
+
+def test_empalmar_version_nombres_robusto_a_empalme_incremental() -> None:
+    # hallazgo negociado 2026-09-01: empalmar 2012+2019 primero, y recién
+    # después sumar 2025 con version_nombres=2012, debe dar el mismo resultado
+    # que empalmar los 3 de una -- antes, el tramo ya empalmado (2012+2019)
+    # aportaba su `nombre` ya mezclado (el de 2019, no el de 2012 puro).
+    p4 = PeriodoMensual(2025, 7)
+    tramo_2012 = _resultado(
+        [(_r1, "11", 100.0, "ok", None), (_r2, "11", 100.0, "ok", None)],
+        version=2012,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "nombre-2012"}),
+    )
+    tramo_2019 = _resultado(
+        [(_r2, "11", 100.0, "ok", None), (_r3, "11", 101.0, "ok", None)],
+        version=2019,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "nombre-2019"}),
+    )
+    tramo_2025 = _resultado(
+        [(_r3, "11", 101.0, "ok", None), (p4, "11", 105.0, "ok", None)],
+        version=2025,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "nombre-2025"}),
+    )
+
+    directo = empalmar([tramo_2012, tramo_2019, tramo_2025], version_nombres=2012)
+
+    parcial = empalmar([tramo_2012, tramo_2019])  # sin version_nombres -- gana 2019 acá
+    incremental = empalmar([parcial, tramo_2025], version_nombres=2012)
+
+    esperado = "nombre-2012"
+    assert directo.resultado.ancho.loc["11", "nombre"] == esperado
+    assert incremental.resultado.ancho.loc["11", "nombre"] == esperado
+
+
+def test_empalmar_nombres_por_version_se_fusiona_a_traves_de_empalmes() -> None:
+    # el registro interno de nombres por versión sobrevive un empalme, para
+    # que un empalme POSTERIOR pueda seguir resolviendo version_nombres.
+    tramo_2012 = _resultado(
+        [(_r1, "INPP", 100.0, "ok", None), (_r2, "INPP", 100.0, "ok", None)],
+        version=2012,
+        nombres=pd.Series({"INPP": "nombre-2012"}),
+    )
+    tramo_2019 = _resultado(
+        [(_r2, "INPP", 100.0, "ok", None), (_r3, "INPP", 101.0, "ok", None)],
+        version=2019,
+        nombres=pd.Series({"INPP": "nombre-2019"}),
+    )
+    r = empalmar([tramo_2012, tramo_2019])
+    assert set(r._nombres_por_version) == {2012, 2019}
+    assert r._nombres_por_version[2012]["INPP"] == "nombre-2012"
+    assert r._nombres_por_version[2019]["INPP"] == "nombre-2019"
+
+
+def test_empalmar_cascada_default_no_depende_de_como_se_agruparon_los_empalmes() -> None:
+    # hallazgo negociado 2026-09-01: sin version_nombres, la cascada default
+    # usaba el `nombre` ya colapsado de cada tramo -- si el tramo interior se
+    # había empalmado con version_nombres explícito, ese sesgo se filtraba al
+    # resultado externo aunque el afuera NO pidiera version_nombres. tramo_2025
+    # deliberadamente NO nombra "11" -- sin el sesgo, gana 2019 (más reciente
+    # que sí lo nombra), no 2012.
+    p4 = PeriodoMensual(2025, 7)
+    tramo_2012 = _resultado(
+        [(_r1, "11", 100.0, "ok", None), (_r2, "11", 100.0, "ok", None)],
+        version=2012,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "nombre-2012"}),
+    )
+    tramo_2019 = _resultado(
+        [(_r2, "11", 100.0, "ok", None), (_r3, "11", 101.0, "ok", None)],
+        version=2019,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "nombre-2019"}),
+    )
+    tramo_2025 = _resultado(
+        [(_r3, "11", 101.0, "ok", None), (p4, "11", 105.0, "ok", None)],
+        version=2025,
+        agregacion="SECTOR",
+        # sin nombres -- no aporta nada para "11"
+    )
+
+    directo = empalmar([tramo_2012, tramo_2019, tramo_2025])
+
+    interno = empalmar([tramo_2012, tramo_2019], version_nombres=2012)
+    incremental = empalmar([interno, tramo_2025])
+
+    esperado = "nombre-2019"
+    assert directo.resultado.ancho.loc["11", "nombre"] == esperado
+    assert incremental.resultado.ancho.loc["11", "nombre"] == esperado
+
+
+def _compuesto_sin_registro(nombres: pd.Series) -> ResultadoIndice:
+    """`ResultadoIndice` con 2 manifiestos (2012+2019), `nombres` plano, y
+    `nombres_por_version=None` -- construcción pública legítima (ver
+    `test_modelos_indice.py::test_nombres_por_version_con_varios_manifiestos_sin_explicito_queda_vacio`),
+    su registro queda vacío por diseño."""
+    df = pd.concat(
+        [
+            pd.DataFrame(
+                {
+                    "version": [2012],
+                    "agregacion": ["SECTOR"],
+                    "rubro": ["produccion_total"],
+                    "indice_replicado": [100.0],
+                    "estado_calculo": ["ok"],
+                    "motivo_error": [None],
+                },
+                index=pd.MultiIndex.from_tuples([(_r1, "11")], names=["periodo", "indice"]),
+            ),
+            pd.DataFrame(
+                {
+                    "version": [2019],
+                    "agregacion": ["SECTOR"],
+                    "rubro": ["produccion_total"],
+                    "indice_replicado": [100.0],
+                    "estado_calculo": ["ok"],
+                    "motivo_error": [None],
+                },
+                index=pd.MultiIndex.from_tuples([(_r2, "11")], names=["periodo", "indice"]),
+            ),
+        ]
+    )
+    reporte = pd.DataFrame(
+        {"version": [2012, 2019], "estado_calculo": ["ok", "ok"]}, index=df.index
+    )
+    return ResultadoIndice(
+        df,
+        [
+            _manifiesto(version=2012, agregacion="SECTOR"),
+            _manifiesto(version=2019, agregacion="SECTOR"),
+        ],
+        reporte,
+        pd.DataFrame({"version": []}),
+        nombres=nombres,
+    )
+
+
+def test_empalmar_nombre_plano_de_tramo_sin_historial_sobrevive_como_huerfano() -> None:
+    # hallazgo negociado 2026-09-01 (ronda 2): registro COMPLETAMENTE vacío --
+    # sin información por versión, el nombre plano entero se trata como huérfano.
+    compuesto = _compuesto_sin_registro(pd.Series({"11": "nombre-plano"}))
+    assert compuesto._nombres_por_version == {}  # precondición
+
+    posterior = _resultado(
+        [(_r2, "11", 100.0, "ok", None), (PeriodoMensual(2025, 7), "11", 105.0, "ok", None)],
+        version=2025,
+        agregacion="SECTOR",
+    )
+
+    r = empalmar([compuesto, posterior])
+    assert r.resultado.ancho.loc["11", "nombre"] == "nombre-plano"
+
+
+def test_empalmar_indice_huerfano_y_trazable_en_el_mismo_tramo_gana_el_trazable() -> None:
+    # hallazgo negociado 2026-09-01 (ronda 2): registro parcial (NO vacío) --
+    # "11" es huérfano (no aparece en el registro del propio tramo), "21" es
+    # trazable (sí aparece) -- ambos deben sobrevivir, y "21" debe conservar el
+    # valor TRAZABLE si alguna vez difiere del plano (acá coinciden a propósito
+    # para poder afirmar el valor sin ambigüedad).
+    tramo = _resultado(
+        [(_r2, "11", 100.0, "ok", None), (_r2, "21", 100.0, "ok", None)],
+        version=2019,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "plano-sin-version", "21": "trazable-2019"}),
+        nombres_por_version={2019: pd.Series({"21": "trazable-2019"})},
+    )
+    assert tramo._nombres_por_version != {}  # precondición: NO vacío
+
+    posterior = _resultado(
+        [
+            (_r2, "11", 100.0, "ok", None),
+            (_r2, "21", 100.0, "ok", None),
+            (PeriodoMensual(2025, 7), "11", 105.0, "ok", None),
+            (PeriodoMensual(2025, 7), "21", 105.0, "ok", None),
+        ],
+        version=2025,
+        agregacion="SECTOR",
+    )
+
+    r = empalmar([tramo, posterior])
+    ancho = r.resultado.ancho
+    assert ancho.loc["11", "nombre"] == "plano-sin-version"
+    assert ancho.loc["21", "nombre"] == "trazable-2019"
+
+
+def test_empalmar_huerfano_y_trazable_colisionan_en_el_mismo_indice_gana_el_trazable() -> None:
+    # hallazgo negociado 2026-09-01 (ronda 3): el test mixto de arriba usa
+    # índices DISTINTOS para huérfano ("11") y trazable ("21") -- nunca prueba
+    # una colisión real donde ambas capas nombran el MISMO índice. Un mutante
+    # que aplique el registro por versión ANTES que los huérfanos pasaba los
+    # tests existentes en silencio y devolvía el huérfano en vez del trazable
+    # (verificado con un mutante real antes de esta negociación).
+    compuesto = _compuesto_sin_registro(pd.Series({"11": "huerfano"}))
+    assert compuesto._nombres_por_version == {}  # precondición: sin historial
+
+    posterior = _resultado(
+        [(_r2, "11", 100.0, "ok", None), (PeriodoMensual(2025, 7), "11", 105.0, "ok", None)],
+        version=2025,
+        agregacion="SECTOR",
+        nombres=pd.Series({"11": "trazable-2025"}),
+    )
+
+    r = empalmar([compuesto, posterior])
+    assert r.resultado.ancho.loc["11", "nombre"] == "trazable-2025"

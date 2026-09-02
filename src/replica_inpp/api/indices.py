@@ -11,6 +11,7 @@ from replica_inpp.dominio.modelos.canasta import CanastaINPP
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.modelos.serie import SerieNormalizada
 from replica_inpp.dominio.periodos import periodo_desde_str
+from replica_inpp.dominio.tipos import VersionCanasta
 
 
 def calcular_indice(
@@ -132,7 +133,11 @@ def rebasar(
     return _rebasar(resultado, periodo_desde_str(periodo_referencia), valor_base)
 
 
-def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> ResultadoIndice:
+def empalmar(
+    resultados: list[ResultadoIndice],
+    forzar: bool = False,
+    version_nombres: VersionCanasta | None = None,
+) -> ResultadoIndice:
     """Concatena tramos de distinta versión de canasta en un único `ResultadoIndice`.
 
     En la frontera (periodo de traslape entre versiones contiguas, ver
@@ -162,6 +167,17 @@ def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> Resulta
             interna (en ambos casos, `UserWarning` en vez de rechazar). Los
             tramos recién calculados (sin rebasar) tienen
             `periodo_referencia=None` y no disparan la primera guardia.
+        version_nombres: versión de canasta cuyo `nombres` original tiene
+            precedencia MÁXIMA en la columna `nombre` combinada (gana incluso
+            sobre tramos más nuevos) -- ej. `empalmar([r2012, r2019, r2025],
+            version_nombres=2012)` conserva los nombres de 2012 aunque 2019/2025
+            también los traigan. `None` (default) = precedencia del más
+            reciente. Para un `indice` que esa versión no nombra, sigue
+            aplicando el fallback normal entre el resto de los tramos. Robusto
+            a empalme incremental: `empalmar([empalmar([r2012, r2019]), r2025],
+            version_nombres=2012)` da el mismo resultado que empalmar los 3 de
+            una -- no importa si `r2012` llegó directo o ya pasó por un
+            `empalmar` anterior.
 
     Raises:
         InvarianteViolado: menos de 2 `resultados`; no todos comparten
@@ -169,8 +185,11 @@ def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> Resulta
             topología PATH (cada par consecutivo comparte exactamente 1
             periodo, ninguno no consecutivo comparte alguno); un tramo trae
             `periodo_referencia` que no coincide con la frontera sin `forzar`;
-            o `indice_replicado` de algún `indice` compartido en la frontera
+            `indice_replicado` de algún `indice` compartido en la frontera
             difiere entre tramos más allá de la tolerancia interna (escala no
-            coherente -- falta `rebasar()` antes) sin `forzar`.
+            coherente -- falta `rebasar()` antes) sin `forzar`; o
+            `version_nombres` no corresponde a ningún tramo de `resultados`
+            (ni a su historial de empalmes previos), o ese tramo no tiene
+            `nombres` asignados.
     """
-    return _empalmar(resultados, forzar=forzar)
+    return _empalmar(resultados, forzar=forzar, version_nombres=version_nombres)

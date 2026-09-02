@@ -5,7 +5,7 @@ import pandas as pd
 from replica_inpp.dominio.errores import InvarianteViolado
 from replica_inpp.dominio.modelos.base import Resultado, Vista
 from replica_inpp.dominio.periodos import PeriodoMensual
-from replica_inpp.dominio.tipos import ManifestCalculo
+from replica_inpp.dominio.tipos import ManifestCalculo, VersionCanasta
 
 _COLUMNAS_MINIMAS = {"version", "agregacion", "rubro", "indice_replicado", "estado_calculo"}
 _ORDEN_SEVERIDAD = {"ok": 0, "rellenado": 1, "parcial": 2, "sin_datos": 3, "fallida": 4}
@@ -38,6 +38,22 @@ class ResultadoIndice(Resultado):
             (esa existe ahí para no perder precisión al promediar 2 quincenas
             en `a_mensual` — el INPP siempre es mensual, no hay promedio que
             perder precisión).
+        nombres_por_version: registro interno `{version: nombres}` -- un
+            `nombres` propio por cada versión que aportó al resultado, sin
+            colapsar. `None` (default): si `nombres` viene dado y `manifiesto`
+            tiene una sola entrada (caso normal, recién salido de
+            `calcular_indice`), se autocompleta como
+            `{manifiesto[0].version: nombres}`; si `manifiesto` tiene más de
+            una entrada (resultado ya empalmado) y no se pasa explícito, queda
+            vacío. `empalmar()` SIEMPRE lo pasa explícito (fusión de los
+            registros de todos los tramos) para que `version_nombres` siga
+            resolviendo el nombre ORIGINAL de cualquier versión sin importar
+            cuántos empalmes incrementales hubo antes -- ver
+            `dominio/conversion.py::_combinar_nombres`. Si se pasa explícito,
+            sus claves deben ser subconjunto de las versiones de `manifiesto`
+            (si no, `InvarianteViolado`) — evita que una versión inventada
+            (que no corresponde a ningún tramo real) se cuele como si lo
+            fuera.
 
     Raises:
         InvarianteViolado: Si `manifiesto` está vacío, si `df_resultado` no trae
@@ -45,11 +61,12 @@ class ResultadoIndice(Resultado):
             `indice_replicado`, `estado_calculo`), si `estado_calculo` tiene
             valores fuera de `{ok, rellenado, parcial, sin_datos, fallida}`, si
             dos entradas de `manifiesto` repiten la misma combinación
-            `(version, agregacion, rubro)`, o si el conjunto de combinaciones
+            `(version, agregacion, rubro)`, si el conjunto de combinaciones
             `(version, agregacion, rubro)` de `manifiesto` no coincide EXACTO
             (en ambas direcciones) con el de `df_resultado` — ni manifiesto sin
             filas que lo respalden, ni filas huérfanas sin manifiesto que las
-            declare.
+            declare —, o si `nombres_por_version` (pasado explícito) trae
+            alguna versión que no está en `manifiesto`.
 
     Esquema de `df_resultado` (MultiIndex: `(periodo, indice)`):
         version (int): versión de canasta de la corrida (2012, 2019 o 2025).
@@ -96,6 +113,7 @@ class ResultadoIndice(Resultado):
         df_diagnostico: pd.DataFrame,
         nombres: pd.Series | None = None,
         periodo_referencia: PeriodoMensual | None = None,
+        nombres_por_version: dict[VersionCanasta, pd.Series] | None = None,
     ) -> None:
         if not manifiesto:
             raise InvarianteViolado("ResultadoIndice.manifiesto no puede estar vacío")
@@ -135,6 +153,22 @@ class ResultadoIndice(Resultado):
         self._df_diagnostico = df_diagnostico
         self._nombres = nombres
         self._periodo_referencia = periodo_referencia
+        registro_nombres: dict[VersionCanasta, pd.Series]
+        if nombres_por_version is not None:
+            versiones_manifiesto = {m.version for m in manifiesto}
+            versiones_ajenas = set(nombres_por_version) - versiones_manifiesto
+            if versiones_ajenas:
+                raise InvarianteViolado(
+                    "ResultadoIndice.nombres_por_version trae versiones que no están en "
+                    f"'manifiesto': {sorted(versiones_ajenas)}; debe ser subconjunto de "
+                    f"{sorted(versiones_manifiesto)}."
+                )
+            registro_nombres = nombres_por_version
+        elif nombres is not None and len(manifiesto) == 1:
+            registro_nombres = {manifiesto[0].version: nombres}
+        else:
+            registro_nombres = {}
+        self._nombres_por_version = registro_nombres
 
     @property
     def manifiesto(self) -> list[ManifestCalculo]:

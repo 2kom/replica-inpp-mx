@@ -26,6 +26,7 @@ import pandas as pd
 from replica_inpp.dominio.errores import ErrorCalculo, InvarianteViolado
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.periodos import PeriodoMensual
+from replica_inpp.dominio.tipos import VersionCanasta
 
 _ESTADOS_CON_VALOR = frozenset({"ok", "parcial", "rellenado"})
 
@@ -79,24 +80,77 @@ def _valores_en_periodo(resultado: ResultadoIndice, periodo: PeriodoMensual) -> 
     return valores
 
 
-def _combinar_nombres(ordenados: list[ResultadoIndice]) -> pd.Series | None:
-    """Combina `_nombres` de los tramos (orden cronológico), precedencia del más reciente.
+def _combinar_nombres(
+    ordenados: list[ResultadoIndice], version_nombres: VersionCanasta | None = None
+) -> tuple[pd.Series | None, dict[VersionCanasta, pd.Series]]:
+    """Combina nombres por versión de los tramos para mostrar, y fusiona su historial.
 
-    El nombre vigente (tramo más nuevo) se aplica a TODAS las filas de ese
-    `indice` en el resultado combinado -- tramos viejos incluidos -- igual que
-    `replica-inpc-mx`: `Vista.ancho` muestra un solo nombre por `indice`, no
-    uno distinto por periodo.
+    Devuelve `(nombres_planos, nombres_por_version)`:
+
+    - `nombres_planos`: el que se muestra en `.resultado.ancho`. Se reconstruye
+      en 2 capas:
+      1. **Huérfanos**: por cada tramo, las entradas de su `_nombres` plano
+         cuyo `indice` NO aparece en ninguna serie del propio
+         `_nombres_por_version` de ESE tramo -- sin información de a qué
+         versión pertenecen (puede ser un tramo ya empalmado sin historial, o
+         un `indice` suelto dentro de un tramo por lo demás trazable). Se
+         aplican en el orden de `ordenados` (cronológico por tramo, no por
+         versión); ceden ante cualquier nombre trazable.
+      2. **Registro por versión**: orden numérico ascendente de `registro`
+         (versión = año en este dominio, así que asc = cronológico), el
+         último (mayor) sobreescribe -- da la MISMA respuesta sin importar si
+         un tramo llegó directo o ya pasó por un `empalmar` anterior con
+         `version_nombres` explícito, porque nunca depende del `_nombres` ya
+         colapsado de un tramo compuesto.
+      Si se da `version_nombres`, esa versión tiene precedencia máxima sobre
+      ambas capas; para un `indice` que esa versión nunca nombró, sigue
+      aplicando lo de arriba.
+    - `nombres_por_version`: fusión de `_nombres_por_version` de TODOS los
+      tramos -- se pasa a `ResultadoIndice(..., nombres_por_version=...)` para
+      que un empalme posterior (incremental) siga pudiendo resolver
+      `version_nombres` de cualquier versión ya incluida, sin importar cuántos
+      empalmes hubo antes. Los huérfanos NUNCA entran acá (no hay versión real
+      que atribuirles) -- sobreviven a un empalme más porque se recalculan
+      igual en cada llamada, pero no acumulan `nombres_por_version` propio.
     """
+    registro: dict[VersionCanasta, pd.Series] = {}
+    for r in ordenados:
+        registro.update(r._nombres_por_version)
+
+    if version_nombres is not None and version_nombres not in registro:
+        raise InvarianteViolado(
+            f"empalmar: version_nombres={version_nombres} no corresponde a ningún tramo de "
+            "'resultados' (ni a su historial de empalmes previos), o ese tramo no tiene "
+            "'nombres' asignados."
+        )
+
     combinado: dict[object, str] = {}
-    for r in ordenados:  # cronológico: el último sobreescribe
-        if r._nombres is not None:
-            combinado.update(r._nombres.to_dict())
-    if not combinado:
-        return None
-    return pd.Series(combinado)
+    for r in ordenados:
+        if r._nombres is None:
+            continue
+        indices_trazables_del_tramo: set[object] = set()
+        for serie in r._nombres_por_version.values():
+            indices_trazables_del_tramo.update(serie.index)
+        huerfanos = {
+            indice: nombre
+            for indice, nombre in r._nombres.to_dict().items()
+            if indice not in indices_trazables_del_tramo
+        }
+        combinado.update(huerfanos)
+    for version in sorted(registro):  # cronológico ascendente: el último (mayor) sobreescribe
+        combinado.update(registro[version].to_dict())
+    if version_nombres is not None:
+        combinado.update(registro[version_nombres].to_dict())  # precedencia máxima, va al final
+
+    nombres_planos = pd.Series(combinado) if combinado else None
+    return nombres_planos, registro
 
 
-def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> ResultadoIndice:
+def empalmar(
+    resultados: list[ResultadoIndice],
+    forzar: bool = False,
+    version_nombres: VersionCanasta | None = None,
+) -> ResultadoIndice:
     """Concatena tramos de distinta versión de canasta en un único `ResultadoIndice`.
 
     En la frontera entre 2 tramos consecutivos (el periodo de traslape que
@@ -121,14 +175,26 @@ def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> Resulta
         resultados: al menos 2 `ResultadoIndice`, cada uno de una versión de
             canasta distinta, mismos `agregacion`/`rubro`/`incluir_petroleo`.
         forzar: permite empalmar cuando `periodo_referencia` de un tramo no
-            coincide con la frontera con el tramo siguiente (emite
-            `UserWarning` en vez de rechazar). Los tramos recién calculados
-            (sin rebasar) tienen `periodo_referencia=None` y no disparan esta
-            guardia.
+            coincide con la frontera con el tramo siguiente, o cuando
+            `indice_replicado` difiere entre tramos en la frontera más allá de
+            la tolerancia interna (en ambos casos, `UserWarning` en vez de
+            rechazar). Los tramos recién calculados (sin rebasar) tienen
+            `periodo_referencia=None` y no disparan la primera guardia.
+        version_nombres: versión de canasta cuyo `nombres` original tiene
+            precedencia MÁXIMA en la columna `nombre` combinada (gana incluso
+            sobre tramos más nuevos). `None` (default) = precedencia del más
+            reciente. Para un `indice` que esa versión no nombra, sigue
+            aplicando el fallback normal entre el resto de los tramos. Robusto
+            a empalme incremental: resuelve contra `nombres_por_version` (que
+            se fusiona en cada `empalmar`, ver `_combinar_nombres`), no contra
+            el `nombres` ya mezclado de un tramo que a su vez viene de un
+            `empalmar` anterior -- `empalmar([empalmar([r2012, r2019]), r2025],
+            version_nombres=2012)` da el mismo resultado que
+            `empalmar([r2012, r2019, r2025], version_nombres=2012)`.
 
-    Combina `nombres` de todos los tramos (precedencia del más reciente) para
-    que el resultado combinado conserve la columna pública `nombre` de
-    `.resultado.ancho` cuando algún tramo la trae.
+    Combina `nombres` de todos los tramos para que el resultado combinado
+    conserve la columna pública `nombre` de `.resultado.ancho` cuando algún
+    tramo la trae -- ver `version_nombres` arriba para elegir cuál manda.
 
     Raises:
         InvarianteViolado: menos de 2 `resultados`; no todos comparten
@@ -136,10 +202,11 @@ def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> Resulta
             vez ordenados por periodo mínimo) no comparte exactamente 1
             periodo, o algún par no consecutivo comparte alguno (topología
             distinta de PATH); un tramo trae `periodo_referencia` que no
-            coincide con la frontera sin `forzar`; o `indice_replicado` de
-            algún `indice` compartido en la frontera difiere entre tramos más
-            allá de la tolerancia interna (escala no coherente — falta
-            `rebasar()` antes) sin `forzar`.
+            coincide con la frontera sin `forzar`; `indice_replicado` de algún
+            `indice` compartido en la frontera difiere entre tramos más allá
+            de la tolerancia interna (escala no coherente — falta `rebasar()`
+            antes) sin `forzar`; o `version_nombres` no corresponde a ningún
+            tramo de `resultados`.
     """
     if len(resultados) < 2:
         raise InvarianteViolado("empalmar requiere al menos 2 ResultadoIndice.")
@@ -200,13 +267,16 @@ def empalmar(resultados: list[ResultadoIndice], forzar: bool = False) -> Resulta
     refs_explicitas = [r.periodo_referencia for r in ordenados if r.periodo_referencia is not None]
     periodo_referencia_out = refs_explicitas[-1] if refs_explicitas else None
 
+    nombres_out, nombres_por_version_out = _combinar_nombres(ordenados, version_nombres)
+
     return ResultadoIndice(
         df_combinado,
         manifiesto_combinado,
         reporte_combinado,
         diag_combinado,
-        nombres=_combinar_nombres(ordenados),
+        nombres=nombres_out,
         periodo_referencia=periodo_referencia_out,
+        nombres_por_version=nombres_por_version_out,
     )
 
 
@@ -328,4 +398,5 @@ def rebasar(
         resultado.diagnostico,
         nombres=resultado._nombres,
         periodo_referencia=periodo_referencia,
+        nombres_por_version=resultado._nombres_por_version,
     )
