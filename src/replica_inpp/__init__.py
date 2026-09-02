@@ -14,6 +14,16 @@ from replica_inpp.api.config import limpiar_cache, mostrar_config, reset_config,
 from replica_inpp.api.consultas import consultar_indice
 from replica_inpp.api.indices import calcular_indice, empalmar, rebasar
 from replica_inpp.api.insumos import cargar_canasta, cargar_serie
+from replica_inpp.api.variaciones import (
+    inflacion_acumulada,
+    inflacion_en,
+    inflacion_maxima,
+    inflacion_minima,
+    inflacion_promedio,
+    variacion_acumulada_anual,
+    variacion_desde,
+    variacion_periodica,
+)
 from replica_inpp.dominio.errores import (
     ArchivoCorrupto,
     ArchivoNoEncontrado,
@@ -42,8 +52,9 @@ from replica_inpp.dominio.errores import (
 from replica_inpp.dominio.modelos.canasta import CanastaINPP
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.modelos.serie import SerieNormalizada
+from replica_inpp.dominio.modelos.variacion import ResultadoVariacion
 from replica_inpp.dominio.periodos import PeriodoMensual, periodo_desde_str
-from replica_inpp.dominio.tipos import ManifestCalculo
+from replica_inpp.dominio.tipos import ManifestCalculo, ManifestDerivado
 
 # Declaración para el type checker — runtime manejado por _ReplicaModule proxy.
 timeout_api: int
@@ -64,12 +75,23 @@ __all__ = [
     "calcular_indice",
     "empalmar",
     "rebasar",
+    # variaciones
+    "inflacion_acumulada",
+    "inflacion_en",
+    "inflacion_maxima",
+    "inflacion_minima",
+    "inflacion_promedio",
+    "variacion_acumulada_anual",
+    "variacion_desde",
+    "variacion_periodica",
     # consultas INEGI
     "consultar_indice",
     # tipos de retorno
     "CanastaINPP",
     "ManifestCalculo",
+    "ManifestDerivado",
     "ResultadoIndice",
+    "ResultadoVariacion",
     "SerieNormalizada",
     # errores
     "ArchivoCorrupto",

@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
+from replica_inpp.dominio.errores import InvarianteViolado
 from replica_inpp.dominio.periodos import PeriodoMensual
 
 # Recorte de destino/etapa — eje ortogonal a la clasificación SCIAN, sin equivalente
@@ -175,3 +176,25 @@ class ManifestCalculo:
     ruta_canasta: Path | None = None
     ruta_series: Path | None = None
     fecha: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class ManifestDerivado:
+    """Registro de una corrida de variaciones sobre un `ResultadoIndice` ya calculado.
+
+    Equivalente a `ManifestCalculo` para resultados derivados (no una corrida elemental
+    de Laspeyres, sino una transformación sobre uno o más `ResultadoIndice` ya existentes)
+    -- mismo patrón que `replica-inpc-mx`, con `agregacion`/`rubro` en vez de `tipo` (ver
+    "Dominio: INPP vs INPC" en CLAUDE.md).
+    """
+
+    versiones: list[VersionCanasta]
+    agregacion: str
+    rubro: str
+    clase: str
+    descripcion: str
+    fecha: datetime = field(default_factory=datetime.now)
+
+    def __post_init__(self) -> None:
+        if not self.clase:
+            raise InvarianteViolado("ManifestDerivado.clase no puede estar vacío")
