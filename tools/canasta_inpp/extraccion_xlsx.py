@@ -262,6 +262,117 @@ _NIVELES_JERARQUIA: tuple[str, ...] = ("sector", "subsector", "rama", "subrama",
 
 _COLUMNAS_CANASTA: tuple[str, ...] = ("generico", "codigo", *_NIVELES_JERARQUIA)
 
+# SCIAN: cada nivel tiene un largo de código fijo (2/3/4/5/6 dígitos). Se usa
+# para decidir a QUÉ nivel pertenece un texto encontrado, en vez de confiar en
+# la columna donde cayó -- ver `_nivel_por_digitos`.
+_NIVEL_POR_LARGO_CODIGO: dict[int, str] = {
+    2: "sector",
+    3: "subsector",
+    4: "rama",
+    5: "subrama",
+    6: "clase",
+}
+
+# Filas de nivel que faltan por completo en el xlsx de canasta de una versión
+# (no es error de columna: el xlsx salta directo al nivel siguiente sin
+# escribir esta fila) -- nombre sacado a mano del Sistema de Clasificación
+# Industrial de América del Norte (SCIAN), confirmado contra
+# `Tabla_de_Correspondencia_SCIAN_2013_SCIAN_2007.xlsx`. 2019: códigos {337,
+# 338} (rama 3279) y {373} (subrama 33299). 2012: código {471} (rama 4883,
+# fila 1125) y {517} (subrama 56133, fila 1298). Encontrados escaneando los 3
+# xlsx completos por continuidad de código, ver `investigacion_recorte_rubro.md`.
+# Si aparece un código nuevo no listado acá, `extraer_canasta` rechaza en vez
+# de dejar el nombre viejo.
+_NOMBRES_NIVEL_FALTANTE: dict[VersionCanastaScian, dict[str, str]] = {
+    2012: {
+        "4883": "Servicios relacionados con el transporte por agua",
+        "56133": "Suministro de personal permanente",
+    },
+    2019: {
+        "3279": "Fabricación de otros productos a base de minerales no metálicos",
+        "33299": "Fabricación de otros productos metálicos",
+    },
+    2025: {},
+}
+
+# Código de nivel mal tecleado en el xlsx de canasta (el nombre sí es
+# correcto, solo el dígito líder está mal) -- distinto del caso de arriba
+# (fila ausente): acá la fila SÍ existe, con el nombre real, pero el código no
+# coincide con el de sus hijos. 2012: subrama del código {471} viene como
+# "48832" pero sus hijos (clase `488330`, y el propio `codigo` en
+# ponderadores_2012.csv) confirman "48833" -- mezcla de numeración SCIAN
+# 2007/2013 en la misma celda, confirmado contra la tabla de correspondencia
+# (fila 1129: "48832" SÍ es código válido, pero de la OTRA numeración, con
+# clase "488320" -- no la que trae esta fila, "488330").
+_CORRECCION_CODIGO: dict[VersionCanastaScian, dict[str, str]] = {
+    2012: {"48832": "48833"},
+    2019: {},
+    2025: {},
+}
+
+
+def _corregir_codigo(texto: str, correcciones: dict[str, str]) -> str:
+    """Reemplaza el código líder de `texto` si está en `correcciones` (ver `_CORRECCION_CODIGO`).
+
+    Preserva el nombre tal cual viene del xlsx -- solo el código está mal, no
+    hace falta (ni conviene) reinventar el nombre.
+    """
+    codigo, separador, resto = texto.partition(" ")
+    codigo_correcto = correcciones.get(codigo)
+    if codigo_correcto is None:
+        return texto
+    return f"{codigo_correcto}{separador}{resto}"
+
+
+def _nivel_por_digitos(texto: str) -> str | None:
+    """Nivel real de `texto` ("código nombre") según el largo de su código, o `None`.
+
+    `None` cuando el código no es puramente numérico (ej. sector agrupado
+    `"31-33 Industrias manufactureras"` de 2012) o su largo no es de ningún
+    nivel SCIAN -- en ese caso el llamador debe usar la columna como respaldo.
+    """
+    codigo = texto.partition(" ")[0]
+    if not codigo.isdigit():
+        return None
+    return _NIVEL_POR_LARGO_CODIGO.get(len(codigo))
+
+
+def _completar_jerarquia_faltante(
+    estado: dict[str, str], nombres_faltantes: dict[str, str]
+) -> dict[str, str]:
+    """Reconstruye niveles cuya fila no existe en el xlsx (ver `_NOMBRES_NIVEL_FALTANTE`).
+
+    Detecta el hueco comparando el código de cada nivel contra el prefijo del
+    nivel más profundo inmediato (ej. rama debe ser prefijo de 4 dígitos del
+    código de subrama) -- si no coincide, ese nivel se saltó en el xlsx.
+    Ignora sector agrupado (código no numérico, ej. `"31-33"`), lo resuelve
+    `resolver_sector_agrupado` más adelante en el pipeline.
+
+    Raises:
+        ValueError: el nivel saltado no está en `nombres_faltantes` -- nombre
+            desconocido, no se puede reconstruir en silencio.
+    """
+    estado = dict(estado)
+    for nivel_padre, nivel_hijo in zip(_NIVELES_JERARQUIA, _NIVELES_JERARQUIA[1:], strict=False):
+        codigo_padre = estado[nivel_padre].partition(" ")[0]
+        codigo_hijo = estado[nivel_hijo].partition(" ")[0]
+        if not (codigo_padre.isdigit() and codigo_hijo.isdigit()):
+            continue
+        prefijo_esperado = codigo_hijo[: len(codigo_padre)]
+        if codigo_padre == prefijo_esperado:
+            continue
+        nombre = nombres_faltantes.get(prefijo_esperado)
+        if nombre is None:
+            raise ValueError(
+                f"'{nivel_padre}' con código '{prefijo_esperado}' no aparece como fila propia "
+                f"en el xlsx (implícito por '{nivel_hijo}'='{estado[nivel_hijo]}') y no está en "
+                "la tabla de nombres conocidos -- agregar su nombre real (SCIAN) a "
+                "_NOMBRES_NIVEL_FALTANTE_2019 antes de continuar."
+            )
+        estado[nivel_padre] = f"{prefijo_esperado} {nombre}"
+    return estado
+
+
 # cota defensiva contra el "rango fantasma" que reporta openpyxl en algunos
 # xlsx de INEGI (dimensions declara >1M filas aunque los datos reales
 # terminan mucho antes) -- corta tras N filas en blanco consecutivas.
@@ -314,6 +425,8 @@ def extraer_canasta(ruta: Path, version: VersionCanastaScian) -> pd.DataFrame:
     Lanza `ValueError` si el xlsx trae código de genérico duplicado.
     """
     layout = LAYOUTS_CANASTA[version]
+    nombres_faltantes = _NOMBRES_NIVEL_FALTANTE[version]
+    correccion_codigo = _CORRECCION_CODIGO[version]
     wb = openpyxl.load_workbook(ruta, data_only=True)
     ws: Worksheet = wb[layout.hoja]
 
@@ -353,15 +466,25 @@ def extraer_canasta(ruta: Path, version: VersionCanastaScian) -> pd.DataFrame:
                 {
                     "generico": str(nombre_generico).strip(),
                     "codigo": str(fila[layout.col_codigo_generico]).strip().zfill(3),
-                    **estado,
+                    **_completar_jerarquia_faltante(estado, nombres_faltantes),
                 }
             )
             continue
 
-        for nivel in _NIVELES_JERARQUIA:
-            texto = _texto_nivel(layout, nivel, fila)
+        for nivel_columna in _NIVELES_JERARQUIA:
+            texto = _texto_nivel(layout, nivel_columna, fila)
             if texto is not None:
-                estado[nivel] = texto
+                texto = _corregir_codigo(texto, correccion_codigo)
+                # `nivel_columna` es solo dónde cayó el texto -- el nivel real
+                # sale del largo de su código (ver `_nivel_por_digitos`), no de
+                # la columna: INEGI a veces mete el texto de un nivel más
+                # profundo en la columna del padre cuando este tiene un solo
+                # hijo (ej. subsector 511/rama 5111 en 2019, ver
+                # investigacion_recorte_rubro.md) y confiar en la columna deja
+                # ese nivel con el texto equivocado y el siguiente con basura
+                # vieja de una rama distinta.
+                nivel_real = _nivel_por_digitos(texto) or nivel_columna
+                estado[nivel_real] = texto
                 break
 
     df = pd.DataFrame(filas, columns=list(_COLUMNAS_CANASTA))

@@ -29,6 +29,45 @@ VERSION_ENCADENAMIENTO_OBLIGATORIO = 2025
 _NOMBRE_CHOCOLATE_114 = "chocolate en tableta y en polvo"
 _CLASE_CHOCOLATE_114 = "311350"
 
+# Discrepancia de fuente en 2012: canasta.xlsx y ponderadores_inpp_inegi_2012.xlsx
+# discrepan en el código SCIAN de estos 3 genéricos (canasta.xlsx es internamente
+# consistente, ponderadores.xlsx también, solo no coinciden entre sí -- mismo tipo
+# de problema que Chocolate 113/114 en 2019, no error de extracción). Desempatado
+# contra docs/requerimientos/xlsx/2012/tabla_equivalencias_por_generico.xlsx
+# (árbol SCIAN 2007 propio de INEGI para la canasta 2012, tercera fuente
+# independiente) -- en los 3 casos gana el código de ponderadores.xlsx, no el de
+# canasta.xlsx. Aplica solo sobre el texto que viene de --canasta (sector...clase
+# combinados código+nombre); se valida el valor ACTUAL antes de pisarlo para que,
+# si INEGI corrige el xlsx algún día, esto reviente en vez de reaplicar un parche
+# que ya no hace falta.
+_RECONCILIACION_2012: tuple[tuple[str, str, str, str], ...] = (
+    # (codigo, nivel, valor actual en canasta.xlsx, valor correcto)
+    (
+        "287",
+        "subrama",
+        "32552 Fabricación de adhesivos y selladores",
+        "32551 Fabricación de pinturas y recubrimientos",
+    ),
+    (
+        "287",
+        "clase",
+        "325520 Fabricación de adhesivos y selladores",
+        "325510 Fabricación de pinturas y recubrimientos",
+    ),
+    (
+        "384",
+        "clase",
+        "333911 Fabricación de bombas",
+        "333910 Fabricación de bombas y sistemas de bombeo",
+    ),
+    (
+        "497",
+        "clase",
+        "531111 Alquiler sin intermediación de viviendas amuebladas",
+        "531112 Alquiler sin intermediación de viviendas no amuebladas",
+    ),
+)
+
 
 def parsear_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Define y parsea los flags del CLI, valida su combinación."""
@@ -209,6 +248,21 @@ def main(argv: list[str] | None = None) -> None:
         df = df.drop(columns=columnas_jerarquia).merge(
             df_canasta, on="codigo", how="left", validate="one_to_one"
         )
+
+        if args.version == 2012:
+            for codigo, nivel, valor_actual_esperado, valor_correcto in _RECONCILIACION_2012:
+                filas_codigo = df.loc[df["codigo"] == codigo]
+                if filas_codigo.empty:
+                    continue  # el genérico no vino en --ponderadores, nada que reconciliar
+                valor_actual = str(filas_codigo[nivel].iloc[0]).strip()
+                if valor_actual != valor_actual_esperado:
+                    raise ValueError(
+                        f"No se puede reconciliar el código {codigo} en 2012: se esperaba "
+                        f"'{nivel}'='{valor_actual_esperado}' (valor conocido de "
+                        f"canasta.xlsx) pero vino '{valor_actual}' -- revisar si INEGI "
+                        "corrigió el xlsx antes de seguir aplicando este parche."
+                    )
+                df.loc[df["codigo"] == codigo, nivel] = valor_correcto
 
     if args.encadenamientos is not None:
         df_encadenamiento = extraer_encadenamiento(args.encadenamientos)
