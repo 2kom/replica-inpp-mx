@@ -25,68 +25,58 @@ def calcular_indice(
 ) -> ResultadoIndice:
     """Calcula el índice de una agregación/rubro de la canasta del INPP.
 
-    Envuelve `LaspeyresDirecto` (Etapa 2, sin encadenar) para `canasta.version`
-    2012/2019. Para `canasta.version == 2025` despacha a `LaspeyresEncadenado`
-    (Etapa 3, encadenamiento) en su lugar — requiere `referencia`, el
-    `ResultadoIndice` de la MISMA `agregacion`/`rubro`/`incluir_petroleo` ya
-    calculado con `canasta.version=2019` (típicamente con una llamada previa
-    a `calcular_indice`), del que sale `factor_h`. Sin `referencia`, rechaza
-    el cálculo en vez de calcular con `LaspeyresDirecto` sobre 2025: eso daría
-    un número mal calculado sin avisar (mezcla la serie 2025, que sigue en
-    escala absoluta continua de 2019, con ponderadores 2025).
+    Calcula sin encadenar para canasta 2012/2019. Para canasta 2025 sí
+    encadena, y para eso exige `referencia`: el mismo índice ya calculado
+    con canasta 2019 (misma `agregacion`/`rubro`/`incluir_petroleo`). Sin
+    `referencia`, rechaza el cálculo en vez de dar un número mal calculado
+    sin avisar.
 
     Args:
         canasta: canasta ya cargada (`cargar_canasta`).
-        serie: serie ya cargada (`cargar_serie`), de la misma versión que
-            `canasta` y del `recorte` correspondiente a `rubro`.
-        agregacion: `"INPP"` (general), un nivel SCIAN (`"SECTOR"`,
-            `"SUBSECTOR"`, `"RAMA"`, `"SUBRAMA"`, `"CLASE"` — nombre completo o
-            abreviatura oficial) o `"MERCANCIAS_SERVICIOS"`.
-        rubro: columna de peso/destino de producción. Se infiere solo del
-            `recorte` de `serie` — `produccion_total`/`bienes_finales` se
-            llaman igual que su recorte, `mercado_exportacion` infiere
-            `"exportaciones"` (único caso con nombre distinto al recorte).
-            Único caso ambiguo: `mercado_nacional` acepta 4 rubros
-            (`demanda_interna_total`, `demanda_interna_consumo`,
-            `demanda_interna_capital`, `bienes_intermedios`) y exige
-            indicarlo a mano — ver `dominio/tipos.py::RUBROS_POR_RECORTE`
-            para el resto del mapeo.
+        serie: serie ya cargada (`cargar_serie`), misma versión que `canasta`.
+            El indice calculado se infiere por el tipo de serie (`recorte`).
+        agregacion: `"INPP"` (general), o nivel SCIAN (`"SECTOR"`,
+            `"SUBSECTOR"`, `"RAMA"`, `"SUBRAMA"`, `"CLASE"`) o `"MERCANCIAS_SERVICIOS"`.
+        rubro: parámetro específico para cuando serie cargada es del recorte
+            `mercado_nacional` — ese recorte alimenta 4 índices distintos y
+            hay que elegir cuál calcular: `demanda_interna_total`,
+            `demanda_interna_consumo`, `demanda_interna_capital` o
+            `bienes_intermedios`. Para los demás recortes
+            (`produccion_total`, `bienes_finales`, `mercado_exportacion`) no
+            hace falta — se infiere solo.
         incluir_petroleo: si `False`, excluye el genérico `070` (Petróleo
-            crudo) antes de agrupar, sin normalizar aparte — la propia
-            división `Σ(w·índice)/Σw` ya renormaliza sobre los genéricos
-            restantes.
+            crudo) antes de calcular el indice.
         referencia: solo si `canasta.version == 2025` — `ResultadoIndice` de
             la MISMA `agregacion`/`rubro`/`incluir_petroleo`, con
             `canasta.version=2019` y que cubra el periodo de traslape
             (jul-2025). Ignorado si `canasta.version != 2025`.
 
     Raises:
-        InvarianteViolado: `canasta.version == 2025` sin `referencia` (es
-            obligatoria en ese caso); `referencia` sin un manifiesto con
-            `version=2019` y la MISMA `agregacion`/`rubro`/`incluir_petroleo`
-            que se pide acá (ver
-            `dominio/calculo/laspeyres_encadenado.py::LaspeyresEncadenado`);
-            `agregacion` no es válida; o `rubro` no es válido para el
-            `recorte` de `serie` (o es ambiguo y no se indicó).
-        VersionNoCoincide: `serie` viene de `cargar_serie` (trae `version` en
-            metadata) y su versión no coincide con `canasta.version`. No se
-            valida si `serie` se construyó a mano, sin esa metadata.
-        CanastaSinGenericos: tras filtrar pesos NaN/0 (y el 070 si
+        InvarianteViolado: canasta 2025 sin `referencia`; `referencia` de
+            otra `agregacion`/`rubro`/`incluir_petroleo` o que no sea de
+            canasta 2019; `agregacion` inválida; o `rubro` inválido o
+            ambiguo para el recorte de `serie`.
+        VersionNoCoincide: `serie` y `canasta` son de versiones distintas
+            (solo se detecta si `serie` viene de `cargar_serie`).
+        CanastaSinGenericos: tras filtrar pesos vacíos (y el 070 si
             `incluir_petroleo=False`), no queda ningún genérico utilizable.
-        ErrorCalculo: a la serie le faltan genéricos que el grupo necesita, no
-            tiene ningún periodo dentro del rango vigente de la versión, hay
-            desbordamiento al ponderar la serie, o (solo `canasta.version ==
-            2025`) falta el factor de encadenamiento, `referencia` no cubre
-            el periodo de traslape, o algún grupo no tiene `factor_h` en el
-            tramo anterior (reclasificación de agrupación entre versiones).
+        ErrorCalculo: a la serie le faltan genéricos que el grupo necesita,
+            no cubre ningún periodo válido, hay desbordamiento al ponderar,
+            o (solo canasta 2025) falta el factor de encadenamiento,
+            `referencia` no cubre el periodo de traslape, o algún grupo
+            quedó sin factor por reclasificación entre versiones.
+
+    Examples:
+        >>> calcular_indice(canasta, serie, "INPP")
+        >>> calcular_indice(canasta, serie, "INPP", "bienes_intermedios")
+        >>> calcular_indice(canasta_25, serie_25, "INPP", referencia=res_2019)
     """
     if canasta.version == 2025:
         if referencia is None:
             raise InvarianteViolado(
                 "calcular_indice con canasta.version=2025 requiere 'referencia' -- el "
-                "ResultadoIndice de la misma agregacion/rubro/incluir_petroleo ya calculado con "
-                "canasta.version=2019, del que LaspeyresEncadenado saca factor_h (ver "
-                "dominio/calculo/laspeyres_encadenado.py)."
+                "ResultadoIndice de la misma agregacion/rubro/incluir_petroleo ya "
+                "calculado con canasta.version=2019."
             )
         return LaspeyresEncadenado(referencia).calcular(
             canasta,
@@ -112,9 +102,9 @@ def rebasar(
     de canasta ni requerir un módulo de correspondencia de códigos entre
     versiones. Útil para llevar el resultado de una canasta más vieja (ej.
     2012, base Jun2012=100) a la referencia de otra (ej. Jul2019=100) antes de
-    compararlos -- a diferencia del encadenamiento 2019→2025
-    (`LaspeyresEncadenado`), este NO absorbe reclasificación de genéricos: solo
-    reescala números ya agregados por `agregacion`/`rubro`.
+    compararlos -- a diferencia del encadenamiento 2019→2025, este NO absorbe
+    reclasificación de genéricos: solo reescala números ya agregados por
+    `agregacion`/`rubro`.
 
     Args:
         resultado: índice ya calculado (`calcular_indice`) a reexpresar.
@@ -129,6 +119,10 @@ def rebasar(
             algún `indice` ahí es NaN o exactamente 0.
         ErrorCalculo: `valor_base` es finito pero produce overflow (`inf`) al
             aplicarlo contra algún `indice_replicado` real.
+
+    Examples:
+        >>> rebasar(resultado_2012, "Jul 2019")
+        >>> rebasar(resultado, "Ene 2020", valor_base=50.0)
     """
     return _rebasar(resultado, periodo_desde_str(periodo_referencia), valor_base)
 
@@ -191,5 +185,9 @@ def empalmar(
             `version_nombres` no corresponde a ningún tramo de `resultados`
             (ni a su historial de empalmes previos), o ese tramo no tiene
             `nombres` asignados.
+
+    Examples:
+        >>> empalmar([resultado_2012, resultado_2019, resultado_2025])
+        >>> empalmar([r2012, r2019, r2025], version_nombres=2012)
     """
     return _empalmar(resultados, forzar=forzar, version_nombres=version_nombres)

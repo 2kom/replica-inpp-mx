@@ -349,4 +349,51 @@ def test_cargar_canasta_real(carpeta: str, version: int, filas_esperadas: int) -
 
     assert isinstance(resultado, CanastaINPP)
     assert resultado.version == version
-    assert len(resultado.df) == filas_esperadas
+
+
+# -- cargar_canasta: continuidad de código SCIAN entre niveles ---------------
+#
+# Cada nivel SCIAN tiene un largo de código fijo (2/3/4/5/6 dígitos:
+# sector/subsector/rama/subrama/clase) y anida en el anterior por prefijo --
+# quitarle el último dígito a `codigo clase` debe dar exactamente `codigo
+# subrama`, y así sucesivamente hasta `codigo sector`. Es una prueba de que el
+# CSV que arma `tools/generar_canasta.py` quedó bien construido, no de que la
+# clasificación económica de cada genérico sea la correcta (eso no es parte
+# de este repo, ver CLAUDE.md).
+
+_LARGO_CODIGO_POR_NIVEL: dict[str, int] = {
+    "sector": 2,
+    "subsector": 3,
+    "rama": 4,
+    "subrama": 5,
+    "clase": 6,
+}
+
+
+@pytest.mark.requires_data
+@pytest.mark.parametrize("carpeta", ["canasta", "ponderadores"])
+@pytest.mark.parametrize("version", [2012, 2019, 2025])
+def test_cargar_canasta_real_codigos_scian_anidan_por_prefijo(carpeta: str, version: int) -> None:
+    ruta = DATA_DIR / carpeta / f"ponderadores_{version}.csv"
+    df = insumos.cargar_canasta(str(ruta), version).df  # type: ignore[arg-type]
+
+    largo_incorrecto = {
+        nivel: df.index[df[f"codigo {nivel}"].str.len() != largo].tolist()
+        for nivel, largo in _LARGO_CODIGO_POR_NIVEL.items()
+    }
+    largo_incorrecto = {nivel: codigos for nivel, codigos in largo_incorrecto.items() if codigos}
+    assert not largo_incorrecto, (
+        f"{carpeta}/{version}: código de nivel con largo distinto al esperado "
+        f"(genéricos por nivel): {largo_incorrecto}"
+    )
+
+    niveles = list(_LARGO_CODIGO_POR_NIVEL)  # sector, subsector, rama, subrama, clase
+    huecos: dict[str, list[str]] = {}
+    for nivel_padre, nivel_hijo in zip(niveles, niveles[1:], strict=False):
+        no_anida = df.index[df[f"codigo {nivel_hijo}"].str[:-1] != df[f"codigo {nivel_padre}"]]
+        if len(no_anida):
+            huecos[f"{nivel_hijo}->{nivel_padre}"] = no_anida.tolist()
+    assert not huecos, (
+        f"{carpeta}/{version}: código de nivel que no anida en su padre al quitarle "
+        f"el último dígito (genéricos por par de niveles): {huecos}"
+    )

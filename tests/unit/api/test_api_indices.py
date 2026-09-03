@@ -198,7 +198,7 @@ def test_calcular_indice_sin_metadata_de_version_no_valida() -> None:
 def test_calcular_indice_canasta_2025_lanza_invariante_violado() -> None:
     df = _canasta().df.copy()
     canasta_2025 = CanastaINPP(df, 2025)
-    with pytest.raises(InvarianteViolado, match="LaspeyresEncadenado"):
+    with pytest.raises(InvarianteViolado, match="requiere 'referencia'"):
         calcular_indice(canasta_2025, _serie(), "INPP", rubro="produccion_total")
 
 
@@ -212,7 +212,7 @@ def test_rep_calcular_indice_canasta_2025_lanza_invariante_violado() -> None:
     # arriba.
     df = _canasta().df.copy()
     canasta_2025 = CanastaINPP(df, 2025)
-    with pytest.raises(InvarianteViolado, match="LaspeyresEncadenado"):
+    with pytest.raises(InvarianteViolado, match="requiere 'referencia'"):
         rep.calcular_indice(canasta_2025, _serie(), "INPP", rubro="produccion_total")
 
 
