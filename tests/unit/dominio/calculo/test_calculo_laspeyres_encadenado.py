@@ -374,18 +374,177 @@ def test_producto_final_no_finito_lanza_error_calculo() -> None:
         )
 
 
-def test_grupo_sin_factor_h_en_tramo_anterior_lanza_error_calculo() -> None:
+def test_grupo_sin_factor_h_en_tramo_anterior_usa_respaldo_por_f_j() -> None:
     # transporte cambia de sector "48" (canasta anterior) a "99" (canasta
     # nueva, sin equivalente en el tramo viejo) -- simula una reclasificación
-    # de agrupación entre versiones: SECTOR "99" no existe en `factor_h`.
+    # de agrupación entre versiones: SECTOR "99" no existe en `referencia`, así
+    # que cae al respaldo (promedio ponderado de f_j, ver docstring). Único
+    # genérico del grupo -> el respaldo es exactamente su propio f_j (1.1),
+    # y de-encadenar con ese mismo f_j y volver a encadenar con él recupera la
+    # serie cruda tal cual (110.0/111.1/113.3), sin importar el peso.
     df_nueva = _canasta_nueva().df.copy()
     df_nueva.loc["460", ["codigo sector", "sector"]] = ["99", "99"]
     canasta_reclasificada = CanastaINPP(df_nueva, 2025)
     referencia_sector = _referencia(agregacion="SECTOR")
-    with pytest.raises(ErrorCalculo, match="reclasificación"):
+    r = LaspeyresEncadenado(referencia_sector).calcular(
+        canasta_reclasificada, _serie_nueva(), "SECTOR", rubro="produccion_total"
+    )
+    ancho = r.resultado.ancho
+    assert list(ancho.loc["99"]) == pytest.approx([110.0, 111.1, 113.3])
+
+
+def test_grupo_sin_factor_h_ni_respaldo_por_f_j_lanza_error_calculo() -> None:
+    # mismo escenario de reclasificación, pero además transporte -- único
+    # genérico del grupo "99" -- no tiene f_j válido en 'encadenamiento
+    # exportacion' (columna que sí admite NaN parcial, a diferencia de
+    # 'encadenamiento total'/'produccion nacional', ver
+    # CanastaINPP._COLUMNAS_ENCADENAMIENTO_PARCIAL): ni referencia ni respaldo,
+    # no queda forma de calcular factor_h para el grupo "99".
+    df_nueva = _canasta_nueva(f_j_exportacion_transporte_nan=True).df.copy()
+    df_nueva.loc["460", ["codigo sector", "sector"]] = ["99", "99"]
+    canasta_reclasificada = CanastaINPP(df_nueva, 2025)
+    referencia_sector = _referencia(
+        agregacion="SECTOR", rubro="exportaciones", recorte="mercado_exportacion"
+    )
+    with pytest.raises(ErrorCalculo, match="No hay factor_h"):
         LaspeyresEncadenado(referencia_sector).calcular(
-            canasta_reclasificada, _serie_nueva(), "SECTOR", rubro="produccion_total"
+            canasta_reclasificada,
+            _serie_nueva(recorte="mercado_exportacion"),
+            "SECTOR",
+            rubro="exportaciones",
         )
+
+
+def test_grupo_sin_factor_h_respaldo_con_2_genericos_promedia_ponderado() -> None:
+    # acero (339, peso 30, f_j 1.2) y transporte (460, peso 40, f_j 1.1) pasan
+    # los dos a sector "99" -- grupo nuevo de 2 genéricos, no 1: a diferencia
+    # de test_..._usa_respaldo_por_f_j (grupo de 1, el respaldo se reduce a
+    # "es igual a su propio f_j" y no prueba la fórmula), acá el respaldo
+    # tiene que ser el promedio ponderado real:
+    # factor_h = (30*1.2 + 40*1.1)/(30+40) = 80/70 = 1.142857...
+    # i_tramo (peso 2025, de-encadenado): jul=(30*100+40*100)/70=100.0,
+    # ago=(30*105+40*101)/70=102.714286, sep=(30*108+40*103)/70=105.142857
+    # resultado = i_tramo * factor_h
+    df_nueva = _canasta_nueva().df.copy()
+    df_nueva.loc[["339", "460"], ["codigo sector", "sector"]] = [["99", "99"], ["99", "99"]]
+    canasta_reclasificada = CanastaINPP(df_nueva, 2025)
+    referencia_sector = _referencia(agregacion="SECTOR")
+    r = LaspeyresEncadenado(referencia_sector).calcular(
+        canasta_reclasificada, _serie_nueva(), "SECTOR", rubro="produccion_total"
+    )
+    ancho = r.resultado.ancho
+    assert list(ancho.loc["99"]) == pytest.approx(
+        [114.28571428571428, 117.3877551020408, 120.16326530612244]
+    )
+
+
+def test_grupo_sin_factor_h_respaldo_con_f_j_parcial_no_promedia_solo_lo_valido() -> None:
+    # mismo grupo de 2 genéricos (acero+transporte -> sector "99"), pero
+    # transporte sin f_j válido en 'encadenamiento exportacion' -- el respaldo
+    # debe excluir el GRUPO entero (NaN), no promediar solo acero (que sí
+    # tiene f_j válido). Si un cambio futuro promediara solo lo válido, este
+    # grupo no lanzaría ErrorCalculo -- lanzaría un resultado calculado (mal)
+    # con el peso completo del grupo pero el numerador de un solo genérico.
+    df_nueva = _canasta_nueva(f_j_exportacion_transporte_nan=True).df.copy()
+    df_nueva.loc[["339", "460"], ["codigo sector", "sector"]] = [["99", "99"], ["99", "99"]]
+    canasta_reclasificada = CanastaINPP(df_nueva, 2025)
+    referencia_sector = _referencia(
+        agregacion="SECTOR", rubro="exportaciones", recorte="mercado_exportacion"
+    )
+    with pytest.raises(ErrorCalculo, match="No hay factor_h") as exc_info:
+        LaspeyresEncadenado(referencia_sector).calcular(
+            canasta_reclasificada,
+            _serie_nueva(recorte="mercado_exportacion"),
+            "SECTOR",
+            rubro="exportaciones",
+        )
+    # el mensaje debe decir "no todos" tienen factor -- acero (339) SÍ tiene
+    # f_j válido, solo transporte (460) no. "ningún genérico" sería falso acá
+    # (regresión: mensaje viejo, hallazgo de negociación 2026-09-02).
+    assert "no todos" in str(exc_info.value)
+    assert "ningún" not in str(exc_info.value)
+
+
+def test_referencia_con_indice_replicado_nan_en_traslape_lanza_error_calculo() -> None:
+    # sector 48 (transporte) SÍ existía en 2019 (no reclasificado, a diferencia
+    # de los tests de respaldo de arriba) -- pero su referencia quedó sin dato
+    # en el traslape (estado_calculo="sin_datos", ej. la serie 2019 no cubría
+    # ese periodo para ese genérico). No es una categoría nueva: no debe caer
+    # al respaldo de f_j -- sería sustituir en silencio una referencia
+    # inválida por un número calculado con peso 2025, cuando el grupo sí tenía
+    # ponderador de julio 2019 real que debía usarse (negociación 2026-09-02).
+    manifiesto = ManifestCalculo(
+        version=2019,
+        agregacion="SECTOR",
+        rubro="produccion_total",
+        incluir_petroleo=True,
+        calculador="LaspeyresDirecto",
+    )
+    idx = pd.MultiIndex.from_tuples(
+        [(_TRASLAPE, "11"), (_TRASLAPE, "21"), (_TRASLAPE, "31"), (_TRASLAPE, "48")],
+        names=["periodo", "indice"],
+    )
+    df_largo = pd.DataFrame(
+        {
+            "version": 2019,
+            "agregacion": "SECTOR",
+            "rubro": "produccion_total",
+            "indice_replicado": [130.0, 90.0, 115.0, float("nan")],
+            "estado_calculo": ["ok", "ok", "ok", "sin_datos"],
+            "motivo_error": [None, None, None, "faltantes en serie"],
+        },
+        index=idx,
+    )
+    referencia_sector = ResultadoIndice(
+        df_largo,
+        [manifiesto],
+        pd.DataFrame(index=idx),
+        pd.DataFrame(
+            columns=[
+                "version",
+                "agregacion",
+                "rubro",
+                "periodo",
+                "generico",
+                "nivel_faltante",
+                "tipo_faltante",
+                "detalle",
+            ]
+        ),
+    )
+    with pytest.raises(ErrorCalculo, match="referencia inválida"):
+        LaspeyresEncadenado(referencia_sector).calcular(
+            _canasta_nueva(), _serie_nueva(), "SECTOR", rubro="produccion_total"
+        )
+
+
+def test_grupo_sin_factor_h_respaldo_con_f_j_extremo_no_desborda() -> None:
+    # f_j=1e307 en acero y transporte (grupo nuevo "99") -- multiplicar el
+    # peso CRUDO (30/40) por f_j desbordaría a inf antes de dividir
+    # (30*1e307=3e308 > float64 max ≈1.7977e308) aunque el resultado
+    # matemático real sea perfectamente finito. Con el mismo f_j en ambos
+    # genéricos, el respaldo se cancela con el de-encadenado (serie/f_j*f_j)
+    # y el resultado queda igual al promedio ponderado de la serie CRUDA, sin
+    # importar el valor de f_j -- por eso no desborda con el fix (peso
+    # normalizado antes de multiplicar) y antes sí (negociación 2026-09-02).
+    f_j_extremo = 1e307
+    df_nueva = _canasta_nueva().df.copy()
+    df_nueva.loc[["339", "460"], ["codigo sector", "sector"]] = [["99", "99"], ["99", "99"]]
+    columnas_f_j = [
+        "encadenamiento total",
+        "encadenamiento produccion nacional",
+        "encadenamiento exportacion",
+        "encadenamiento uso final",
+    ]
+    df_nueva.loc[["339", "460"], columnas_f_j] = f_j_extremo
+    canasta_reclasificada = CanastaINPP(df_nueva, 2025)
+    referencia_sector = _referencia(agregacion="SECTOR")
+    r = LaspeyresEncadenado(referencia_sector).calcular(
+        canasta_reclasificada, _serie_nueva(), "SECTOR", rubro="produccion_total"
+    )
+    assert list(r.resultado.ancho.loc["99"]) == pytest.approx(
+        [114.28571428571429, 117.48571428571428, 120.28571428571429]
+    )
 
 
 # ---------- incluir_petroleo=False (debe excluir 070 en ambos cálculos: i_tramo y factor_h) ----------

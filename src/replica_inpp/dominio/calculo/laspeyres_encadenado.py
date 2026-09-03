@@ -75,6 +75,16 @@ class LaspeyresEncadenado(CalculadorBase):
        julio de 2019" — ponderador VIEJO. `referencia` ya trae ese valor
        directo, sin reconciliar códigos de genérico entre versiones (dos
        cálculos independientes, cada uno dentro de su propia clasificación).
+       Para un grupo que no existía en 2019 (cero genéricos, ej. una rama SCIAN
+       nueva tras la reclasificación 2013→2018 — no hay fila que agregar, no
+       "existía pero se perdió") no hay ponderador viejo que usar: ahí sí se
+       cae al promedio ponderado con peso 2025 de `f_j` (la fórmula de
+       `LaspeyresEncadenadoT2`, con el peso normalizado dentro del grupo antes
+       de multiplicar por `f_j` para no desbordar con un `f_j` extremo), solo
+       como respaldo para ese caso. Un grupo que SÍ existía en 2019 pero cuyo
+       `indice_replicado` en `referencia` es NaN ahí (referencia inválida, ej.
+       `estado_calculo="sin_datos"`) no cae a este respaldo — es un error
+       distinto, no una categoría nueva.
     4. `resultado = i_tramo · factor_h`.
 
     Igual que `LaspeyresDirecto`, agrupa por 2 ejes independientes
@@ -109,10 +119,11 @@ class LaspeyresEncadenado(CalculadorBase):
         ErrorCalculo: a `serie` le faltan genéricos que el grupo necesita; la
             columna de encadenamiento del `recorte` está totalmente vacía
             (canasta generada sin `--encadenamientos`); `referencia` no
-            cubre el periodo de traslape; o algún grupo de `agregacion` no
-            tiene `factor_h` en el tramo anterior (reclasificación de
-            agrupación entre 2019 y 2025 — fuera de alcance salvo para
-            SECTOR/INPP/MERCANCIAS_SERVICIOS, que usan código estable).
+            cubre el periodo de traslape; algún grupo existe en `referencia`
+            pero su `indice_replicado` es NaN ahí (referencia inválida, no
+            categoría nueva — no cae a respaldo); o algún grupo de
+            `agregacion` no tiene `factor_h` ni en el tramo anterior ni por
+            respaldo (no todos sus genéricos tienen `f_j` válido).
     """
 
     def __init__(self, referencia: ResultadoIndice) -> None:
@@ -277,14 +288,71 @@ class LaspeyresEncadenado(CalculadorBase):
             )
         factor_h_total = ancho_anterior[traslape].astype(float) / 100
         grupos_del_resultado = pd.Index(i_tramo.index)
+
+        # Grupo AUSENTE de `factor_h_total.index` (nunca existió en 2019, ej. una
+        # rama SCIAN nueva tras la reclasificación 2013→2018) vs grupo PRESENTE
+        # pero con `indice_replicado` NaN en el traslape (existía en 2019, pero
+        # su referencia quedó sin dato ahí, típicamente `estado_calculo=
+        # "sin_datos"`) -- son fallas distintas. Solo el primero cae a respaldo;
+        # el segundo es una referencia inválida, no una categoría nueva, y
+        # tratarlo igual que una ausencia real sustituiría en silencio un dato
+        # que debería fallar por el respaldo de un grupo que en realidad sí
+        # tiene ponderador viejo (nunca debe usarse peso 2025 ahí).
+        grupos_con_referencia_invalida = [
+            grupo
+            for grupo in grupos_del_resultado
+            if grupo in factor_h_total.index and pd.isna(factor_h_total.loc[grupo])
+        ]
+        if grupos_con_referencia_invalida:
+            raise ErrorCalculo(
+                f"referencia tiene 'indice_replicado' en NaN para {grupos_con_referencia_invalida} "
+                f"en el traslape {traslape} -- esos grupos existían en 2019 pero su referencia "
+                "quedó sin dato ahí (probable estado_calculo='sin_datos'), no es una categoría "
+                "nueva y no se puede encadenar con una referencia inválida."
+            )
+
         factor_h = factor_h_total.reindex(grupos_del_resultado)
+        grupos_sin_referencia = grupos_del_resultado[factor_h.isna()]
+        if len(grupos_sin_referencia) > 0:
+            # Categoría nueva en 2025 (cero genéricos en 2019) -- no hay
+            # "ponderador de julio 2019" que usar porque el grupo no existía, así
+            # que se cae a respaldo: promedio ponderado (peso 2025) del propio
+            # f_j de sus genéricos, mismo mecanismo que usa por defecto
+            # LaspeyresEncadenadoT2 de replica-inpc-mx. Solo de respaldo -- para
+            # los grupos que SÍ tienen referencia, el método de arriba sigue
+            # siendo más fiel al manual (usa ponderador viejo, no el nuevo).
+            # Un grupo con ALGÚN genérico sin f_j válido no cuenta como respaldo
+            # confiable -- promediar solo los genéricos que sí tienen f_j daría
+            # un número silenciosamente sesgado (divide entre el ponderador
+            # completo del grupo, no solo el de los genéricos con dato). Se
+            # excluye el grupo entero de `factor_h_respaldo` (queda NaN, `sum`
+            # normal sobre un grupo sin ninguna fila da 0.0 por defecto en
+            # pandas, no NaN -- `min_count=1` evita ese silencio).
+            #
+            # Peso NORMALIZADO (peso/suma_del_grupo, ≤1) antes de multiplicar por
+            # f_j, no peso crudo -- `peso_crudo · f_j` puede desbordar a inf antes
+            # de dividir (ej. peso=40, f_j=1e307 → 4e308 > float64 max) aunque el
+            # promedio ponderado final sea perfectamente finito (~1e307).
+            # Normalizar primero acota cada término a ≤ f_j, sin cambiar el
+            # resultado en el rango normal de `f_j` (~1.0-2.0 en datos reales).
+            grupo_completo = f_j.notna().groupby(categoria_por_generico).transform("all")
+            peso_normalizado = ponderador / ponderador.groupby(categoria_por_generico).transform(
+                "sum"
+            )
+            factor_h_respaldo: pd.Series = (
+                (peso_normalizado * f_j)
+                .where(grupo_completo)
+                .groupby(categoria_por_generico)
+                .sum(min_count=1)
+            )
+            factor_h = factor_h.fillna(factor_h_respaldo.reindex(grupos_del_resultado))
+
         grupos_sin_factor = grupos_del_resultado[factor_h.isna()].tolist()
         if grupos_sin_factor:
             raise ErrorCalculo(
-                f"No hay factor_h (tramo anterior) para {grupos_sin_factor} en el traslape "
-                f"{traslape} -- probable reclasificación de agrupación entre versiones "
-                f"(fuera de alcance para '{agregacion}'; SECTOR/INPP/MERCANCIAS_SERVICIOS "
-                "usan código estable entre 2019 y 2025)."
+                f"No hay factor_h para {grupos_sin_factor} en el traslape {traslape} -- no están "
+                "en el tramo anterior (referencia) y el respaldo no se pudo calcular porque no "
+                "todos los genéricos de estos grupos tienen un factor de encadenamiento válido."
             )
 
         resultado_por_grupo = i_tramo.multiply(factor_h, axis=0)
