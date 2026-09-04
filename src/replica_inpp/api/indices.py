@@ -5,6 +5,7 @@ from __future__ import annotations
 from replica_inpp.dominio.calculo.laspeyres_directo import LaspeyresDirecto
 from replica_inpp.dominio.calculo.laspeyres_encadenado import LaspeyresEncadenado
 from replica_inpp.dominio.conversion import empalmar as _empalmar
+from replica_inpp.dominio.conversion import excluir_desde as _excluir_desde
 from replica_inpp.dominio.conversion import rebasar as _rebasar
 from replica_inpp.dominio.errores import InvarianteViolado
 from replica_inpp.dominio.modelos.canasta import CanastaINPP
@@ -191,3 +192,49 @@ def empalmar(
         >>> empalmar([r2012, r2019, r2025], version_nombres=2012)
     """
     return _empalmar(resultados, forzar=forzar, version_nombres=version_nombres)
+
+
+def excluir_desde(
+    resultado: ResultadoIndice,
+    indice: str,
+    desde: str,
+    hasta: str | None = None,
+) -> ResultadoIndice:
+    """Elimina de `resultado` los periodos de un `indice` puntual en `[desde, hasta]`.
+
+    Uso: cortar la cola de un `indice` que dejó de ser una serie comparable por
+    un cambio estructural real -- ej. una reforma que elimina el cobro de un
+    servicio y el valor publicado cae a 0 de forma permanente desde ahí. Ese
+    valor no es "dato faltante" (`rebasar`/`variacion_periodica` fallarían
+    tratándolo como base cero o desbordamiento), es fin de serie comparable.
+    No reinterpreta ningún valor -- solo quita filas del rango para ese
+    `indice`; el resto de `resultado` (otros `indice`, u otros periodos del
+    mismo `indice` fuera del rango) queda intacto.
+
+    Args:
+        resultado: índice ya calculado (`calcular_indice`) a recortar.
+        indice: valor de nivel `indice` a recortar -- código SCIAN, `"INPP"`,
+            `"MERCANCIAS_SERVICIOS"`, o cualquier otro presente en
+            `resultado`; no se valida contra un catálogo cerrado.
+        desde: primer periodo a excluir (inclusive), texto canónico `"Mes AAAA"`.
+        hasta: último periodo a excluir (inclusive); `None` = hasta el final
+            de `resultado`.
+
+    Raises:
+        PeriodoNoInterpretable: `desde`/`hasta` no es un periodo mensual
+            reconocible.
+        InvarianteViolado: `hasta` anterior a `desde`; ningún registro de
+            `indice` cae en `[desde, hasta]` (nada que excluir); o excluir el
+            rango vacía una `(version, agregacion, rubro)` entera de
+            `resultado`.
+
+    Examples:
+        >>> excluir_desde(resultado, "517", "Ene 2015")
+        >>> excluir_desde(resultado, "INPP", "Ene 2020", "Dic 2020")
+    """
+    return _excluir_desde(
+        resultado,
+        indice,
+        periodo_desde_str(desde),
+        periodo_desde_str(hasta) if hasta is not None else None,
+    )

@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 
 import replica_inpp as rep
-from replica_inpp.api.indices import calcular_indice, empalmar, rebasar
+from replica_inpp.api.indices import calcular_indice, empalmar, excluir_desde, rebasar
 from replica_inpp.dominio.errores import (
     CanastaSinGenericos,
     InvarianteViolado,
@@ -652,3 +652,41 @@ def test_empalmar_real_2012_rebasado_con_2019_da_serie_continua() -> None:
     assert valores.index.max() == PeriodoMensual(2025, 7)
     assert combinado.periodo_referencia == PeriodoMensual(2019, 7)
     assert {m.version for m in combinado.manifiesto} == {2012, 2019}
+
+
+# -- excluir_desde: fachada pública --------------------------------------------
+
+
+def test_excluir_desde_esta_en_all_de_la_fachada() -> None:
+    assert "excluir_desde" in rep.__all__
+
+
+def test_rep_excluir_desde_es_la_misma_funcion_que_indices_excluir_desde() -> None:
+    assert rep.excluir_desde is excluir_desde
+
+
+def test_excluir_desde_parsea_periodo_texto_y_no_toca_otros_indices() -> None:
+    r = calcular_indice(_canasta(), _serie(), "SECTOR", rubro="produccion_total")
+    rec = excluir_desde(r, "11", "Ago 2019")
+    assert (PeriodoMensual(2019, 8), "11") not in rec.df.index
+    assert (PeriodoMensual(2019, 7), "11") in rec.df.index
+    assert (PeriodoMensual(2019, 8), "21") in rec.df.index  # otro indice, intacto
+
+
+def test_excluir_desde_periodo_no_interpretable_propaga() -> None:
+    r = calcular_indice(_canasta(), _serie(), "SECTOR", rubro="produccion_total")
+    with pytest.raises(PeriodoNoInterpretable):
+        excluir_desde(r, "11", "no es un periodo")
+
+
+def test_excluir_desde_hasta_none_excluye_hasta_el_final() -> None:
+    r = calcular_indice(_canasta(), _serie(), "SECTOR", rubro="produccion_total")
+    rec = excluir_desde(r, "11", "Jul 2019")
+    assert (PeriodoMensual(2019, 7), "11") not in rec.df.index
+    assert (PeriodoMensual(2019, 8), "11") not in rec.df.index
+
+
+def test_excluir_desde_indice_inexistente_propaga_invariante_violado() -> None:
+    r = calcular_indice(_canasta(), _serie(), "SECTOR", rubro="produccion_total")
+    with pytest.raises(InvarianteViolado):
+        excluir_desde(r, "99", "Jul 2019")

@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from replica_inpp.dominio.conversion import empalmar, rebasar
+from replica_inpp.dominio.conversion import empalmar, excluir_desde, rebasar
 from replica_inpp.dominio.errores import ErrorCalculo, InvarianteViolado
 from replica_inpp.dominio.modelos.indice import ResultadoIndice
 from replica_inpp.dominio.periodos import PeriodoMensual
@@ -910,3 +910,131 @@ def test_empalmar_huerfano_y_trazable_colisionan_en_el_mismo_indice_gana_el_traz
 
     r = empalmar([compuesto, posterior])
     assert r.resultado.ancho.loc["11", "nombre"] == "trazable-2025"
+
+
+# --------------------------------------------------------------------------- excluir_desde
+
+_p1 = PeriodoMensual(2019, 1)
+_p2 = PeriodoMensual(2019, 2)
+_p3 = PeriodoMensual(2019, 3)
+_p4 = PeriodoMensual(2019, 4)
+
+
+def _resultado_dos_indices() -> ResultadoIndice:
+    # caso real que motiva esto: '517' colapsa a 0 desde cierto periodo
+    # (reforma de telecomunicaciones 2015, ver docs/), '518' no se toca.
+    return _resultado(
+        [
+            (_p1, "517", 100.0, "ok", None),
+            (_p2, "517", 100.0, "ok", None),
+            (_p3, "517", 0.0, "ok", None),
+            (_p4, "517", 0.0, "ok", None),
+            (_p1, "518", 50.0, "ok", None),
+            (_p2, "518", 51.0, "ok", None),
+            (_p3, "518", 52.0, "ok", None),
+            (_p4, "518", 53.0, "ok", None),
+        ],
+        agregacion="SUBSECTOR",
+    )
+
+
+def test_excluir_desde_quita_el_rango_del_indice_pedido() -> None:
+    r = excluir_desde(_resultado_dos_indices(), "517", _p3)
+    filas_517 = r.df[r.df.index.get_level_values("indice") == "517"]
+    assert sorted(filas_517.index.get_level_values("periodo")) == [_p1, _p2]
+
+
+def test_excluir_desde_no_toca_periodos_del_indice_fuera_del_rango() -> None:
+    r = excluir_desde(_resultado_dos_indices(), "517", _p3)
+    assert (_p1, "517") in r.df.index
+    assert (_p2, "517") in r.df.index
+
+
+def test_excluir_desde_no_toca_otros_indices() -> None:
+    r = excluir_desde(_resultado_dos_indices(), "517", _p1)
+    filas_518 = r.df[r.df.index.get_level_values("indice") == "518"]
+    assert len(filas_518) == 4
+
+
+def test_excluir_desde_hasta_none_excluye_hasta_el_final() -> None:
+    r = excluir_desde(_resultado_dos_indices(), "517", _p3)
+    assert (_p3, "517") not in r.df.index
+    assert (_p4, "517") not in r.df.index
+
+
+def test_excluir_desde_hasta_dado_deja_periodos_posteriores() -> None:
+    r = excluir_desde(_resultado_dos_indices(), "517", _p2, _p3)
+    assert (_p1, "517") in r.df.index
+    assert (_p2, "517") not in r.df.index
+    assert (_p3, "517") not in r.df.index
+    assert (_p4, "517") in r.df.index
+
+
+def test_excluir_desde_hasta_anterior_a_desde_falla() -> None:
+    with pytest.raises(InvarianteViolado):
+        excluir_desde(_resultado_dos_indices(), "517", _p3, _p1)
+
+
+def test_excluir_desde_indice_inexistente_falla() -> None:
+    with pytest.raises(InvarianteViolado):
+        excluir_desde(_resultado_dos_indices(), "999", _p1)
+
+
+def test_excluir_desde_rango_sin_filas_para_ese_indice_falla() -> None:
+    # '517' existe, pero no en un rango tan futuro -- nada que excluir.
+    with pytest.raises(InvarianteViolado):
+        excluir_desde(_resultado_dos_indices(), "517", PeriodoMensual(2099, 1))
+
+
+def test_excluir_desde_reporte_pierde_las_mismas_filas_que_df() -> None:
+    r = excluir_desde(_resultado_dos_indices(), "517", _p3)
+    assert (_p3, "517") not in r.reporte.index
+    assert (_p4, "517") not in r.reporte.index
+    assert (_p3, "518") in r.reporte.index  # otro indice, mismo periodo: intacto
+
+
+def test_excluir_desde_diagnostico_intacto() -> None:
+    original = _resultado_dos_indices()
+    r = excluir_desde(original, "517", _p3)
+    pd.testing.assert_frame_equal(r.diagnostico, original.diagnostico)
+
+
+def test_excluir_desde_manifiesto_preservado() -> None:
+    original = _resultado_dos_indices()
+    r = excluir_desde(original, "517", _p3)
+    assert r.manifiesto == original.manifiesto
+
+
+@pytest.mark.filterwarnings("error")
+def test_excluir_desde_reporte_vacio_no_emite_warning_de_pandas() -> None:
+    # negociado 2026-09-03: `calcular_indice` real siempre alinea `reporte` al
+    # mismo MultiIndex que `df_resultado`, pero `ResultadoIndice` permite
+    # construirse a mano con reporte=pd.DataFrame() (RangeIndex vacío) --
+    # antes del fix, indexar ese reporte con la máscara reindexada disparaba
+    # "UserWarning: Boolean Series key will be reindexed to match DataFrame
+    # index", que bajo -W error/filterwarnings("error") abortaba.
+    df = pd.DataFrame(
+        {
+            "version": [2019, 2019],
+            "agregacion": ["SUBSECTOR", "SUBSECTOR"],
+            "rubro": ["exportaciones", "exportaciones"],
+            "indice_replicado": [100.0, 0.0],
+            "estado_calculo": ["ok", "ok"],
+        },
+        index=pd.MultiIndex.from_tuples([(_r1, "517"), (_r2, "517")], names=["periodo", "indice"]),
+    )
+    manifiesto = [_manifiesto(version=2019, agregacion="SUBSECTOR", rubro="exportaciones")]
+    r = ResultadoIndice(df, manifiesto, pd.DataFrame(), pd.DataFrame())
+
+    rec = excluir_desde(r, "517", _r2)
+    assert (_r2, "517") not in rec.df.index
+    assert rec.reporte.empty
+
+
+def test_excluir_desde_vaciar_toda_la_combinacion_falla() -> None:
+    # excluir TODO el rango del único indice de la corrida deja
+    # (version, agregacion, rubro) del manifiesto sin ninguna fila que lo
+    # respalde -- ResultadoIndice.__init__ lo rechaza, no excluir_desde.
+    r = _resultado([(_p1, "INPP", 100.0, "ok", None), (_p2, "INPP", 101.0, "ok", None)])
+    with pytest.raises(InvarianteViolado):
+        excluir_desde(r, "INPP", _p1)

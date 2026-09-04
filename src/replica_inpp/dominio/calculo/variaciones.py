@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from datetime import datetime
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -35,6 +36,16 @@ from replica_inpp.dominio.periodos import PeriodoMensual
 from replica_inpp.dominio.tipos import ManifestDerivado, VersionCanasta
 
 Periodo = PeriodoMensual
+
+# "error" (default): comportamiento histórico -- una fila computable con base
+# 0, indice_replicado no finito, o variacion_pp resultante no finita revienta
+# TODA la corrida. "marcar": esas filas se excluyen de `.df` (mismo trato que
+# una fila sin dato crudo) y quedan documentadas en `.diagnostico` con
+# estado_calculo="indefinido" -- no elige por su cuenta si el dato es
+# real o basura, solo evita que un grupo degenerado tumbe el resto de
+# `agregacion`/`rubro` que sí calculan bien. Ver `excluir_desde` (`dominio/
+# conversion.py`) para recortar quirúrgicamente un `indice` puntual después.
+EnIndefinido = Literal["error", "marcar"]
 
 _COLS_REPORTE = [
     "estado_calculo",
@@ -75,10 +86,39 @@ def _motivo_faltante(valor_t: float, valor_base: float) -> str:
     return "sin valor replicado en t"
 
 
+def _motivo_indefinido(valor_t: float, valor_base: float) -> str:
+    """Explica por qué una fila con dato en `t` y en la base quedó `indefinido`.
+
+    Mismas 3 causas que revientan la corrida con `en_indefinido="error"`
+    (`_variacion_contra_periodo_base`/`variacion_desde`), en el orden en que
+    se evalúan ahí.
+    """
+    if not np.isfinite(valor_t) or not np.isfinite(valor_base):
+        return "indice_replicado no finito en t o en periodo base"
+    if valor_base == 0:
+        return "base=0 en periodo base"
+    return "variacion_pp resultante no finita (overflow)"
+
+
 def _extraer_columna_cobertura(df_reporte_fuente: pd.DataFrame) -> pd.Series | None:
     if "cobertura_genericos_pct" in df_reporte_fuente.columns:
         return df_reporte_fuente["cobertura_genericos_pct"]
     return None
+
+
+def _validar_en_indefinido(en_indefinido: str) -> None:
+    """Rechaza cualquier valor fuera de `{"error", "marcar"}`.
+
+    `EnIndefinido` es un `Literal` -- no se aplica en runtime, así que un typo
+    (`en_indefinido="marcar_"`) pasaría por la rama implícita "no es 'error'"
+    y excluiría filas en silencio sin que nadie lo pida. Valida incondicional
+    al entrar, no solo dentro del `if invalido.any()` -- si no, el typo pasa
+    desapercibido en cualquier corrida donde no haya filas indefinidas.
+    """
+    if en_indefinido not in ("error", "marcar"):
+        raise InvarianteViolado(
+            f"en_indefinido='{en_indefinido}' inválido; usa 'error' o 'marcar'."
+        )
 
 
 def _verificar_combinacion_unica(largo: pd.DataFrame) -> None:
@@ -100,17 +140,30 @@ def _verificar_combinacion_unica(largo: pd.DataFrame) -> None:
         )
 
 
-def variacion_periodica(resultado: ResultadoIndice, frecuencia: Frecuencia) -> ResultadoVariacion:
+def variacion_periodica(
+    resultado: ResultadoIndice,
+    frecuencia: Frecuencia,
+    en_indefinido: EnIndefinido = "error",
+) -> ResultadoVariacion:
     """Variación de cada periodo contra N periodos anteriores según `frecuencia`.
 
+    Args:
+        en_indefinido: `"error"` (default) preserva el comportamiento
+            histórico -- ver `Raises`. `"marcar"` excluye esas filas de `.df`
+            en vez de fallar toda la corrida; quedan en `.diagnostico` con
+            `estado_calculo="indefinido"` y el motivo puntual (base=0, no
+            finito, u overflow), el resto de `agregacion`/`rubro` calcula
+            normal. Ver `EnIndefinido` arriba.
+
     Raises:
-        InvarianteViolado: Si `frecuencia` no está en el catálogo válido, si
-            ningún periodo resulta computable, si en alguna fila computable
-            (con dato en `t` y en la base) el `indice_replicado` no es finito,
-            si la base es exactamente 0, o si la `variacion_pp` resultante no
-            es finita (overflow: extremos finitos que producen un cociente
-            infinito). Una fila NO computable (`t` o base sin dato) puede
-            conservar un valor no finito en `.reporte` sin disparar esta
+        InvarianteViolado: Si `en_indefinido` no está en `{"error", "marcar"}`;
+            si `frecuencia` no está en el catálogo válido; si ningún periodo
+            resulta computable; o si con `en_indefinido="error"` (default)
+            alguna fila computable (con dato en `t` y en la base) tiene
+            `indice_replicado` no finito, base exactamente 0, o `variacion_pp`
+            resultante no finita (overflow: extremos finitos que producen un
+            cociente infinito). Una fila NO computable (`t` o base sin dato)
+            puede conservar un valor no finito en `.reporte` sin disparar esta
             validación — no afecta `variacion_pp`, que ya la excluye por no
             ser computable.
     """
@@ -125,19 +178,25 @@ def variacion_periodica(resultado: ResultadoIndice, frecuencia: Frecuencia) -> R
         return restar_meses(periodo_t, periodos_atras)
 
     return _variacion_contra_periodo_base(
-        resultado, calcular_periodo_base, f"periodica_{frecuencia}", ""
+        resultado, calcular_periodo_base, f"periodica_{frecuencia}", "", en_indefinido
     )
 
 
-def variacion_acumulada_anual(resultado: ResultadoIndice) -> ResultadoVariacion:
+def variacion_acumulada_anual(
+    resultado: ResultadoIndice, en_indefinido: EnIndefinido = "error"
+) -> ResultadoVariacion:
     """Variación de cada periodo contra diciembre del año anterior.
 
+    Args:
+        en_indefinido: ver `variacion_periodica` -- mismo contrato.
+
     Raises:
-        InvarianteViolado: Si ningún periodo resulta computable, si en
-            alguna fila computable (con dato en `t` y en la base) el
-            `indice_replicado` no es finito, si la base es exactamente 0, o
-            si la `variacion_pp` resultante no es finita (overflow: extremos
-            finitos que producen un cociente infinito). Una fila NO
+        InvarianteViolado: Si `en_indefinido` no está en `{"error", "marcar"}`;
+            si ningún periodo resulta computable; o si con
+            `en_indefinido="error"` (default) alguna fila computable (con dato
+            en `t` y en la base) tiene `indice_replicado` no finito, base
+            exactamente 0, o `variacion_pp` resultante no finita (overflow:
+            extremos finitos que producen un cociente infinito). Una fila NO
             computable (`t` o base sin dato) puede conservar un valor no
             finito en `.reporte` sin disparar esta validación — no afecta
             `variacion_pp`, que ya la excluye por no ser computable.
@@ -146,7 +205,9 @@ def variacion_acumulada_anual(resultado: ResultadoIndice) -> ResultadoVariacion:
     def calcular_periodo_base(periodo_t: Periodo) -> Periodo:
         return PeriodoMensual(periodo_t.año - 1, 12)
 
-    return _variacion_contra_periodo_base(resultado, calcular_periodo_base, "acumulada_anual", "")
+    return _variacion_contra_periodo_base(
+        resultado, calcular_periodo_base, "acumulada_anual", "", en_indefinido
+    )
 
 
 def _variacion_contra_periodo_base(
@@ -154,11 +215,13 @@ def _variacion_contra_periodo_base(
     calcular_periodo_base: Callable[[Periodo], Periodo],
     clase_variacion: str,
     descripcion: str,
+    en_indefinido: EnIndefinido = "error",
 ) -> ResultadoVariacion:
     """Núcleo de `variacion_periodica` y `variacion_acumulada_anual`.
 
     `calcular_periodo_base` mapea cada periodo `t` a su periodo base.
     """
+    _validar_en_indefinido(en_indefinido)
     largo = resultado.resultado.largo
     _verificar_combinacion_unica(largo)
     versiones: list[VersionCanasta] = [m.version for m in resultado.manifiesto]
@@ -193,13 +256,21 @@ def _variacion_contra_periodo_base(
         | (valores_en_base == 0)
         | ~np.isfinite(variacion_pp.astype(float))
     )
+    indefinido = pd.Series(False, index=largo.index)
     if invalido.any():
-        primera_fila_invalida = largo.index[invalido][0]
-        raise InvarianteViolado(
-            f"variaciones: indice_replicado no finito, base=0, o variacion_pp resultante "
-            f"no finita (overflow) en {int(invalido.sum())} fila(s) computable(s); "
-            f"ejemplo {primera_fila_invalida}."
-        )
+        if en_indefinido == "error":
+            primera_fila_invalida = largo.index[invalido][0]
+            raise InvarianteViolado(
+                f"variaciones: indice_replicado no finito, base=0, o variacion_pp resultante "
+                f"no finita (overflow) en {int(invalido.sum())} fila(s) computable(s); "
+                f"ejemplo {primera_fila_invalida}. Usa en_indefinido='marcar' para excluir "
+                "estas filas del resultado en vez de fallar toda la corrida."
+            )
+        # en_indefinido == "marcar": estas filas salen de `.df` (mismo trato
+        # que una fila sin dato crudo) y quedan documentadas en `.diagnostico`
+        # con estado_calculo="indefinido" -- ver `_construir_reporte_y_diagnostico`.
+        indefinido = invalido
+        computable = computable & ~invalido
 
     estados_derivados = pd.Series(
         [
@@ -236,6 +307,7 @@ def _variacion_contra_periodo_base(
         multiindice_base,
         estados_derivados,
         computable,
+        indefinido,
         versiones,
         agregacion,
         rubro,
@@ -262,12 +334,19 @@ def _construir_reporte_y_diagnostico(
     multiindice_base: pd.MultiIndex,
     estados_derivados: pd.Series,
     computable: pd.Series,
+    indefinido: pd.Series,
     versiones: list[VersionCanasta],
     agregacion: str,
     rubro: str,
     clase_variacion: str,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Construye `df_reporte` (todas las filas) y `df_diagnostico` (no computables)."""
+    """Construye `df_reporte` (todas las filas) y `df_diagnostico` (no computables).
+
+    `computable` ya excluye las filas `indefinido` (`en_indefinido="marcar"`,
+    ver `_variacion_contra_periodo_base`) -- acá solo se usa para distinguir su
+    motivo (`"indefinido"`, dato presente pero matemáticamente indefinido) del
+    de una fila sin dato crudo (`"sin_datos"`).
+    """
     if cobertura is not None:
         cobertura_t = cobertura.reindex(largo.index)
         cobertura_base = pd.Series(
@@ -279,12 +358,15 @@ def _construir_reporte_y_diagnostico(
 
     estados_reporte: list[str] = []
     motivos: list[object] = []
-    for es_computable, estado, valor_t, valor_base in zip(
-        computable, estados_derivados, valores_en_t, valores_en_base
+    for es_computable, es_indefinido, estado, valor_t, valor_base in zip(
+        computable, indefinido, estados_derivados, valores_en_t, valores_en_base
     ):
         if es_computable:
             estados_reporte.append(estado)
             motivos.append(float("nan"))
+        elif es_indefinido:
+            estados_reporte.append("indefinido")
+            motivos.append(_motivo_indefinido(valor_t, valor_base))
         else:
             estados_reporte.append("sin_datos")
             motivos.append(_motivo_faltante(valor_t, valor_base))
@@ -332,6 +414,7 @@ def variacion_desde(
     desde: Periodo,
     hasta: Periodo | None = None,
     incluir_parciales: bool = True,
+    en_indefinido: EnIndefinido = "error",
 ) -> ResultadoVariacion:
     """Variación total del rango `[desde, hasta]`; una fila por índice.
 
@@ -339,15 +422,24 @@ def variacion_desde(
     usa el primer/último periodo válido del rango; el periodo real usado se
     registra en `indices_parciales`.
 
+    Args:
+        en_indefinido: `"error"` (default) preserva el comportamiento
+            histórico -- ver `Raises`. `"marcar"` excluye ese `indice` de
+            `.df` en vez de fallar toda la corrida (los demás índices del
+            rango calculan normal); queda en `.diagnostico` con
+            `estado_calculo="indefinido"` y el motivo puntual.
+
     Raises:
-        InvarianteViolado: Si `desde`/`hasta` no existen en el resultado, si
-            `hasta` es anterior a `desde`, si ningún índice tiene datos
-            computables en el rango, si algún `indice_replicado` en alguno de
-            los dos extremos no es finito, si el extremo `desde` (la base) es
-            exactamente 0 (el extremo `hasta` sí puede ser 0: produce
-            `variacion_pp = -100`), o si la `variacion_pp` resultante no es
-            finita (overflow).
+        InvarianteViolado: Si `en_indefinido` no está en `{"error", "marcar"}`;
+            si `desde`/`hasta` no existen en el resultado; si `hasta` es
+            anterior a `desde`; si ningún índice tiene datos computables en el
+            rango; o si con `en_indefinido="error"` (default) algún
+            `indice_replicado` en alguno de los dos extremos no es finito, el
+            extremo `desde` (la base) es exactamente 0 (el extremo `hasta` sí
+            puede ser 0: produce `variacion_pp = -100`), o la `variacion_pp`
+            resultante no es finita (overflow).
     """
+    _validar_en_indefinido(en_indefinido)
     largo = resultado.resultado.largo
     _verificar_combinacion_unica(largo)
     versiones_manifiesto: list[VersionCanasta] = [m.version for m in resultado.manifiesto]
@@ -424,16 +516,50 @@ def variacion_desde(
         valor_desde = float(valores_replicados.at[(desde_real, indice)])  # type: ignore[arg-type]
         valor_hasta = float(valores_replicados.at[(hasta_real, indice)])  # type: ignore[arg-type]
         if not (math.isfinite(valor_desde) and math.isfinite(valor_hasta) and valor_desde != 0):
-            raise InvarianteViolado(
-                f"variacion_desde: indice_replicado no finito, o base (desde)=0, para "
-                f"'{indice}' entre {desde_real} y {hasta_real}."
+            if en_indefinido == "error":
+                raise InvarianteViolado(
+                    f"variacion_desde: indice_replicado no finito, o base (desde)=0, para "
+                    f"'{indice}' entre {desde_real} y {hasta_real}. Usa en_indefinido='marcar' "
+                    "para excluir este índice del resultado en vez de fallar toda la corrida."
+                )
+            _marcar_indefinido_desde(
+                filas_reporte,
+                filas_diagnostico,
+                hasta_real,
+                indice,
+                desde_real,
+                valor_hasta,
+                valor_desde,
+                version_por_fila,
+                cobertura,
+                versiones_str,
+                agregacion,
+                rubro,
             )
+            continue
         variacion_pp = (valor_hasta / valor_desde - 1.0) * 100.0
         if not math.isfinite(variacion_pp):
-            raise InvarianteViolado(
-                f"variacion_desde: variacion_pp resultante no finita (overflow) para "
-                f"'{indice}' entre {desde_real} y {hasta_real}."
+            if en_indefinido == "error":
+                raise InvarianteViolado(
+                    f"variacion_desde: variacion_pp resultante no finita (overflow) para "
+                    f"'{indice}' entre {desde_real} y {hasta_real}. Usa en_indefinido='marcar' "
+                    "para excluir este índice del resultado en vez de fallar toda la corrida."
+                )
+            _marcar_indefinido_desde(
+                filas_reporte,
+                filas_diagnostico,
+                hasta_real,
+                indice,
+                desde_real,
+                valor_hasta,
+                valor_desde,
+                version_por_fila,
+                cobertura,
+                versiones_str,
+                agregacion,
+                rubro,
             )
+            continue
         estado = _estado_derivado(
             str(estados_calculo.at[(hasta_real, indice)]),
             str(estados_calculo.at[(desde_real, indice)]),
@@ -500,6 +626,56 @@ def variacion_desde(
         fecha=datetime.now(),
     )
     return ResultadoVariacion(df_out, manifiesto, df_reporte, df_diagnostico, indices_parciales)
+
+
+def _marcar_indefinido_desde(
+    filas_reporte: list[dict[str, object]],
+    filas_diagnostico: list[dict[str, object]],
+    periodo: Periodo,
+    indice: str,
+    periodo_base: Periodo,
+    valor_t: float,
+    valor_base: float,
+    version_por_fila: pd.Series,
+    cobertura: pd.Series | None,
+    versiones_str: str,
+    agregacion: str,
+    rubro: str,
+) -> None:
+    """Registra un `indice` como `indefinido` en reporte y diagnóstico (`en_indefinido="marcar"`).
+
+    No agrega fila a `filas_resultado` -- el índice queda fuera de `.df` para
+    este rango, mismo trato que un índice sin dato computable.
+    """
+    motivo = _motivo_indefinido(valor_t, valor_base)
+    filas_reporte.append(
+        _construir_fila_reporte(
+            periodo,
+            indice,
+            periodo_base,
+            "indefinido",
+            motivo,
+            valor_t,
+            valor_base,
+            version_por_fila,
+            cobertura,
+        )
+    )
+    filas_diagnostico.append(
+        {
+            "versiones": versiones_str,
+            "agregacion": agregacion,
+            "rubro": rubro,
+            "clase_variacion": "desde",
+            "periodo": periodo,
+            "indice": indice,
+            "estado_calculo": "indefinido",
+            "motivo_error": motivo,
+            "periodo_lag": periodo_base,
+            "version_t": version_por_fila.get((periodo, indice), float("nan")),
+            "version_lag": version_por_fila.get((periodo_base, indice), float("nan")),
+        }
+    )
 
 
 def _construir_fila_reporte(

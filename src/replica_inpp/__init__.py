@@ -13,7 +13,7 @@ from replica_inpp.api import config as _config
 from replica_inpp.api.config import limpiar_cache, mostrar_config, reset_config, set_token
 from replica_inpp.api.consultas import consultar_indice
 from replica_inpp.api.graficas import graficar
-from replica_inpp.api.indices import calcular_indice, empalmar, rebasar
+from replica_inpp.api.indices import calcular_indice, empalmar, excluir_desde, rebasar
 from replica_inpp.api.insumos import cargar_canasta, cargar_serie
 from replica_inpp.api.variaciones import (
     inflacion_acumulada,
@@ -75,6 +75,7 @@ __all__ = [
     # cálculo
     "calcular_indice",
     "empalmar",
+    "excluir_desde",
     "rebasar",
     # graficación
     "graficar",

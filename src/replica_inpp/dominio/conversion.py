@@ -400,3 +400,75 @@ def rebasar(
         periodo_referencia=periodo_referencia,
         nombres_por_version=resultado._nombres_por_version,
     )
+
+
+def excluir_desde(
+    resultado: ResultadoIndice,
+    indice: object,
+    desde: PeriodoMensual,
+    hasta: PeriodoMensual | None = None,
+) -> ResultadoIndice:
+    """Elimina de `resultado` los periodos de un `indice` puntual en `[desde, hasta]`.
+
+    Uso: cortar la cola de un `indice` que dejó de ser una serie comparable
+    por un cambio estructural real (ej. una reforma que elimina el cobro de un
+    servicio y el valor publicado cae a 0 de forma permanente) -- ahí el dato
+    no es "faltante", es fin de serie. No reinterpreta ni recalcula ningún
+    valor -- solo quita las filas del rango para ese `indice`; el resto de
+    `resultado` (otros `indice`, u otros periodos del mismo `indice` fuera del
+    rango) queda intacto.
+
+    Args:
+        resultado: índice ya calculado a recortar.
+        indice: valor de nivel `indice` a recortar -- código SCIAN, `"INPP"`,
+            `"MERCANCIAS_SERVICIOS"`, o cualquier otro presente en
+            `resultado`; no se valida contra un catálogo cerrado.
+        desde: primer periodo a excluir (inclusive).
+        hasta: último periodo a excluir (inclusive); `None` = hasta el final
+            de `resultado`.
+
+    Raises:
+        InvarianteViolado: si `hasta` es anterior a `desde`; si ningún
+            registro de `indice` cae en `[desde, hasta]` (nada que excluir --
+            probable `indice` o rango equivocado); o si excluir el rango
+            completo vacía una `(version, agregacion, rubro)` entera de
+            `resultado` (la invariante de `ResultadoIndice` lo rechaza -- usa
+            un rango más chico o filtra antes de calcular).
+    """
+    if hasta is not None and hasta < desde:
+        raise InvarianteViolado(
+            f"excluir_desde: hasta={hasta} no puede ser anterior a desde={desde}."
+        )
+
+    df = resultado._df_resultado
+    periodos = df.index.get_level_values("periodo")
+    mask_rango = periodos >= desde
+    if hasta is not None:
+        mask_rango &= periodos <= hasta
+    mask_excluir = pd.Series(
+        (df.index.get_level_values("indice") == indice) & mask_rango, index=df.index
+    )
+    if not mask_excluir.any():
+        raise InvarianteViolado(
+            f"excluir_desde: indice={indice!r} no tiene filas en "
+            f"[{desde}, {hasta if hasta is not None else 'fin'}] -- nada que excluir."
+        )
+
+    df_out = df[~mask_excluir]
+    mask_reporte = mask_excluir.reindex(resultado.reporte.index, fill_value=False)
+    # .to_numpy(): indexación booleana posicional -- evita el UserWarning de
+    # pandas ("Boolean Series key will be reindexed") cuando `resultado.reporte`
+    # trae un índice de otro tipo (ej. RangeIndex vacío en un ResultadoIndice
+    # armado a mano) en vez del MultiIndex (periodo, indice) que trae en la
+    # práctica (`calcular_indice` real siempre lo alinea a `df_resultado`).
+    reporte_out = resultado.reporte.loc[~mask_reporte.to_numpy()]
+
+    return ResultadoIndice(
+        df_out,
+        resultado.manifiesto,
+        reporte_out,
+        resultado.diagnostico,
+        nombres=resultado._nombres,
+        periodo_referencia=resultado.periodo_referencia,
+        nombres_por_version=resultado._nombres_por_version,
+    )

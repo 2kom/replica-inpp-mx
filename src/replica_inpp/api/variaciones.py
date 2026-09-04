@@ -23,23 +23,52 @@ from replica_inpp.dominio.periodos import periodo_desde_str
 # -- series --------------------------------------------------------------------
 
 
-def variacion_periodica(resultado: ResultadoIndice, frecuencia: str) -> ResultadoVariacion:
+def variacion_periodica(
+    resultado: ResultadoIndice,
+    frecuencia: str,
+    en_indefinido: Literal["error", "marcar"] = "error",
+) -> ResultadoVariacion:
     """Variación de cada periodo contra N periodos anteriores según `frecuencia`.
 
     Args:
         resultado: resultado de índices.
         frecuencia: `"mensual"` (1M), `"bimestral"` (2M), `"trimestral"` (3M),
             `"cuatrimestral"` (4M), `"semestral"` (6M) o `"anual"` (12M).
+        en_indefinido: `"error"` (default) levanta `InvarianteViolado` si
+            alguna fila computable (dato en `t` y en la base) queda
+            matemáticamente indefinida (base=0, no finito, u overflow) --
+            comportamiento sin cambios. `"marcar"` excluye esas filas de
+            `.resultado`/`.df` en vez de fallar toda la corrida; quedan en
+            `.diagnostico` con `estado_calculo="indefinido"` y el motivo
+            puntual, el resto de `agregacion`/`rubro` calcula normal. Útil
+            para explorar varias combinaciones sin que una categoría
+            degenerada (ej. un servicio que dejó de existir tras una reforma)
+            tumbe toda la corrida -- usa `rep.excluir_desde` después para
+            recortar quirúrgicamente el `indice` puntual una vez identificado.
 
     Raises:
-        InvarianteViolado: `frecuencia` fuera del conjunto válido.
+        InvarianteViolado: `en_indefinido` fuera de `{"error", "marcar"}`;
+            `frecuencia` fuera del conjunto válido; o (con
+            `en_indefinido="error"`, default) alguna fila computable
+            matemáticamente indefinida.
     """
-    return _variacion_periodica(resultado, frecuencia)  # type: ignore[arg-type]
+    return _variacion_periodica(resultado, frecuencia, en_indefinido)  # type: ignore[arg-type]
 
 
-def variacion_acumulada_anual(resultado: ResultadoIndice) -> ResultadoVariacion:
-    """Variación acumulada del año en curso (ene→periodo vs dic año anterior)."""
-    return _variacion_acumulada_anual(resultado)
+def variacion_acumulada_anual(
+    resultado: ResultadoIndice, en_indefinido: Literal["error", "marcar"] = "error"
+) -> ResultadoVariacion:
+    """Variación acumulada del año en curso (ene→periodo vs dic año anterior).
+
+    Args:
+        en_indefinido: ver `variacion_periodica` -- mismo contrato.
+
+    Raises:
+        InvarianteViolado: `en_indefinido` fuera de `{"error", "marcar"}`; o
+            (con `en_indefinido="error"`, default) alguna fila computable
+            matemáticamente indefinida. Ver `variacion_periodica`.
+    """
+    return _variacion_acumulada_anual(resultado, en_indefinido)
 
 
 def variacion_desde(
@@ -47,6 +76,7 @@ def variacion_desde(
     desde: str,
     hasta: str | None = None,
     incluir_parciales: bool = True,
+    en_indefinido: Literal["error", "marcar"] = "error",
 ) -> ResultadoVariacion:
     """Variación total del rango `[desde, hasta]`; una fila por índice.
 
@@ -56,17 +86,27 @@ def variacion_desde(
         hasta: periodo final; `None` = último disponible.
         incluir_parciales: si `False`, excluye periodos con
             `estado_calculo = parcial`. Default `True`.
+        en_indefinido: `"error"` (default) levanta `InvarianteViolado` si
+            algún extremo queda matemáticamente indefinido (base=0, no finito,
+            u overflow) -- comportamiento sin cambios. `"marcar"` excluye ese
+            `indice` de `.df` en vez de fallar toda la corrida (los demás
+            índices del rango calculan normal); queda en `.diagnostico` con
+            `estado_calculo="indefinido"`.
 
     Raises:
         PeriodoNoInterpretable: `desde`/`hasta` con formato inválido.
-        InvarianteViolado: `desde`/`hasta` interpretable pero fuera de rango,
-            ausente en `resultado`, o `desde` posterior a `hasta`.
+        InvarianteViolado: `en_indefinido` fuera de `{"error", "marcar"}`;
+            `desde`/`hasta` interpretable pero fuera de rango, ausente en
+            `resultado`, `desde` posterior a `hasta`; o (con
+            `en_indefinido="error"`, default) algún extremo matemáticamente
+            indefinido.
     """
     return _variacion_desde(
         resultado,
         periodo_desde_str(desde),
         periodo_desde_str(hasta) if hasta is not None else None,
         incluir_parciales,
+        en_indefinido,
     )
 
 

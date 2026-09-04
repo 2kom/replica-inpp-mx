@@ -497,3 +497,122 @@ def test_reporte_propaga_cobertura_del_fuente() -> None:
     assert r.reporte.loc[(_M2, "INPP"), "cobertura_pct_lag"] == pytest.approx(  # type: ignore[index]
         88.0
     )
+
+
+# -- en_indefinido="marcar" -----------------------------------------------------
+# Caso real que motiva esto: un `indice` puntual (ej. subsector '517' del INPP,
+# mercado_exportación) cae permanentemente a 0 por un cambio estructural real
+# (reforma de telecomunicaciones 2015) -- con "error" (default) eso revienta
+# TODA la corrida aunque el resto de los índices calculen bien.
+
+
+def test_periodica_en_indefinido_marcar_excluye_base_cero_y_conserva_los_demas() -> None:
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 103.0)], "B": [(_M1, 0.0), (_M2, 103.0)]})
+    r = variacion_periodica(indice, "mensual", en_indefinido="marcar")
+    assert (_M2, "A") in r.df.index
+    assert (_M2, "B") not in r.df.index
+    assert r.df.loc[(_M2, "A"), "variacion_pp"] == pytest.approx(3.0)  # type: ignore[index]
+
+
+def test_periodica_en_indefinido_marcar_diagnostico_marca_indefinido_con_motivo() -> None:
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 103.0)], "B": [(_M1, 0.0), (_M2, 103.0)]})
+    r = variacion_periodica(indice, "mensual", en_indefinido="marcar")
+    fila = r.diagnostico[(r.diagnostico["periodo"] == _M2) & (r.diagnostico["indice"] == "B")]
+    assert len(fila) == 1
+    assert fila["estado_calculo"].iloc[0] == "indefinido"
+    assert "base=0" in fila["motivo_error"].iloc[0]
+
+
+def test_periodica_en_indefinido_marcar_overflow_tambien_se_excluye() -> None:
+    # mismo escenario que test_periodica_overflow_en_variacion_falla, sin raise.
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 103.0)], "B": [(_M1, 1e-308), (_M2, 1e308)]})
+    r = variacion_periodica(indice, "mensual", en_indefinido="marcar")
+    assert (_M2, "A") in r.df.index
+    assert (_M2, "B") not in r.df.index
+    fila = r.diagnostico[(r.diagnostico["periodo"] == _M2) & (r.diagnostico["indice"] == "B")]
+    assert fila["estado_calculo"].iloc[0] == "indefinido"
+
+
+def test_periodica_en_indefinido_default_error_revienta_aunque_haya_indice_valido() -> None:
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 103.0)], "B": [(_M1, 0.0), (_M2, 103.0)]})
+    with pytest.raises(InvarianteViolado):
+        variacion_periodica(indice, "mensual")
+
+
+def test_acumulada_en_indefinido_marcar_excluye_base_cero_y_conserva_los_demas() -> None:
+    indice = _indice(
+        {
+            "A": [(PeriodoMensual(2018, 12), 100.0), (PeriodoMensual(2019, 12), 110.0)],
+            "B": [(PeriodoMensual(2018, 12), 0.0), (PeriodoMensual(2019, 12), 110.0)],
+        }
+    )
+    r = variacion_acumulada_anual(indice, en_indefinido="marcar")
+    assert (PeriodoMensual(2019, 12), "A") in r.df.index
+    assert (PeriodoMensual(2019, 12), "B") not in r.df.index
+
+
+def test_acumulada_en_indefinido_default_error_revienta() -> None:
+    indice = _indice(
+        {
+            "A": [(PeriodoMensual(2018, 12), 100.0), (PeriodoMensual(2019, 12), 110.0)],
+            "B": [(PeriodoMensual(2018, 12), 0.0), (PeriodoMensual(2019, 12), 110.0)],
+        }
+    )
+    with pytest.raises(InvarianteViolado):
+        variacion_acumulada_anual(indice)
+
+
+def test_desde_en_indefinido_marcar_excluye_indice_base_cero_y_conserva_los_demas() -> None:
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 110.0)], "C": [(_M1, 0.0), (_M2, 110.0)]})
+    r = variacion_desde(indice, _M1, _M2, en_indefinido="marcar")
+    assert set(r.df.index.get_level_values("indice")) == {"A"}
+
+
+def test_desde_en_indefinido_marcar_diagnostico_marca_indefinido_con_motivo() -> None:
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 110.0)], "C": [(_M1, 0.0), (_M2, 110.0)]})
+    r = variacion_desde(indice, _M1, _M2, en_indefinido="marcar")
+    fila = r.diagnostico[r.diagnostico["indice"] == "C"]
+    assert len(fila) == 1
+    assert fila["estado_calculo"].iloc[0] == "indefinido"
+    assert "base=0" in fila["motivo_error"].iloc[0]
+
+
+def test_desde_en_indefinido_marcar_overflow_tambien_se_excluye() -> None:
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 110.0)], "C": [(_M1, 1e-308), (_M2, 1e308)]})
+    r = variacion_desde(indice, _M1, _M2, en_indefinido="marcar")
+    assert set(r.df.index.get_level_values("indice")) == {"A"}
+
+
+def test_desde_en_indefinido_default_error_revienta_aunque_haya_indice_valido() -> None:
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 110.0)], "C": [(_M1, 0.0), (_M2, 110.0)]})
+    with pytest.raises(InvarianteViolado):
+        variacion_desde(indice, _M1, _M2)
+
+
+def test_periodica_en_indefinido_valor_invalido_falla() -> None:
+    # negociado 2026-09-03: sin esto, cualquier typo ("marcar_", "Marcar", "si")
+    # caía en la rama implícita "no es 'error'" y excluía filas en silencio
+    # (repro real: 'B' desaparecía sin excepción, resultado "válido" con solo 'A').
+    indice = _indice({"A": [(_M1, 100.0), (_M2, 103.0)], "B": [(_M1, 0.0), (_M2, 103.0)]})
+    with pytest.raises(InvarianteViolado):
+        variacion_periodica(indice, "mensual", en_indefinido="cualquier-cosa")  # type: ignore[arg-type]
+
+
+def test_periodica_en_indefinido_valor_invalido_falla_aunque_no_haya_fila_indefinida() -> None:
+    # la validación es incondicional -- no solo dentro del `if invalido.any()`,
+    # si no un typo pasaría desapercibido en cualquier corrida sin filas malas.
+    with pytest.raises(InvarianteViolado):
+        variacion_periodica(_indice_mensual(), "mensual", en_indefinido="cualquier-cosa")  # type: ignore[arg-type]
+
+
+def test_acumulada_en_indefinido_valor_invalido_falla() -> None:
+    indice = _indice(
+        {"INPP": [(PeriodoMensual(2018, 12), 100.0), (PeriodoMensual(2019, 12), 110.0)]}
+    )
+    with pytest.raises(InvarianteViolado):
+        variacion_acumulada_anual(indice, en_indefinido="cualquier-cosa")  # type: ignore[arg-type]
+
+
+def test_desde_en_indefinido_valor_invalido_falla() -> None:
+    with pytest.raises(InvarianteViolado):
+        variacion_desde(_indice_dos(), _M1, _M2, en_indefinido="cualquier-cosa")  # type: ignore[arg-type]

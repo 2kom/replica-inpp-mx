@@ -170,7 +170,19 @@ def test_rep_inflacion_promedio_tcac_reenvia_rango_y_falla_por_extremo_ausente()
 def test_variacion_periodica_delega(mocker) -> None:
     fn = mocker.patch.object(variaciones, "_variacion_periodica", return_value="rv")
     assert variaciones.variacion_periodica("idx", "mensual") == "rv"  # type: ignore[arg-type]
-    fn.assert_called_once_with("idx", "mensual")
+    fn.assert_called_once_with("idx", "mensual", "error")
+
+
+def test_variacion_periodica_reenvia_en_indefinido(mocker) -> None:
+    fn = mocker.patch.object(variaciones, "_variacion_periodica", return_value="rv")
+    variaciones.variacion_periodica("idx", "mensual", en_indefinido="marcar")  # type: ignore[arg-type]
+    fn.assert_called_once_with("idx", "mensual", "marcar")
+
+
+def test_variacion_acumulada_anual_reenvia_en_indefinido(mocker) -> None:
+    fn = mocker.patch.object(variaciones, "_variacion_acumulada_anual", return_value="rv")
+    variaciones.variacion_acumulada_anual("idx", en_indefinido="marcar")  # type: ignore[arg-type]
+    fn.assert_called_once_with("idx", "marcar")
 
 
 def test_variacion_desde_convierte_desde_y_hasta(mocker) -> None:
@@ -178,13 +190,45 @@ def test_variacion_desde_convierte_desde_y_hasta(mocker) -> None:
 
     variaciones.variacion_desde("idx", "ene 2015", "DIC 2024", incluir_parciales=False)  # type: ignore[arg-type]
 
-    fn.assert_called_once_with("idx", PeriodoMensual(2015, 1), PeriodoMensual(2024, 12), False)
+    fn.assert_called_once_with(
+        "idx", PeriodoMensual(2015, 1), PeriodoMensual(2024, 12), False, "error"
+    )
 
 
 def test_variacion_desde_hasta_none_pasa_none(mocker) -> None:
     fn = mocker.patch.object(variaciones, "_variacion_desde", return_value="rv")
     variaciones.variacion_desde("idx", "jul 2019")  # type: ignore[arg-type]
-    fn.assert_called_once_with("idx", PeriodoMensual(2019, 7), None, True)
+    fn.assert_called_once_with("idx", PeriodoMensual(2019, 7), None, True, "error")
+
+
+def test_variacion_desde_reenvia_en_indefinido(mocker) -> None:
+    fn = mocker.patch.object(variaciones, "_variacion_desde", return_value="rv")
+    variaciones.variacion_desde("idx", "jul 2019", en_indefinido="marcar")  # type: ignore[arg-type]
+    fn.assert_called_once_with("idx", PeriodoMensual(2019, 7), None, True, "marcar")
+
+
+# -- en_indefinido: valor inválido rechazado por la fachada pública ------------
+# negociado 2026-09-03: estos pasan por rep.* (no el módulo dominio directo)
+# para proteger el wiring real -- la validación vive en dominio, pero debe
+# alcanzarse igual atravesando la fachada.
+
+
+def test_rep_variacion_periodica_en_indefinido_invalido_falla() -> None:
+    indice = rep.calcular_indice(_canasta(), _serie(), "INPP", rubro="produccion_total")
+    with pytest.raises(InvarianteViolado):
+        rep.variacion_periodica(indice, "mensual", en_indefinido="cualquier-cosa")  # type: ignore[arg-type]
+
+
+def test_rep_variacion_acumulada_anual_en_indefinido_invalido_falla() -> None:
+    indice = rep.calcular_indice(_canasta(), _serie(), "INPP", rubro="produccion_total")
+    with pytest.raises(InvarianteViolado):
+        rep.variacion_acumulada_anual(indice, en_indefinido="cualquier-cosa")  # type: ignore[arg-type]
+
+
+def test_rep_variacion_desde_en_indefinido_invalido_falla() -> None:
+    indice = rep.calcular_indice(_canasta(), _serie(), "INPP", rubro="produccion_total")
+    with pytest.raises(InvarianteViolado):
+        rep.variacion_desde(indice, "jul 2019", "ago 2019", en_indefinido="cualquier-cosa")  # type: ignore[arg-type]
 
 
 # -- análisis: Periodo -> str en las tuplas ------------------------------------
