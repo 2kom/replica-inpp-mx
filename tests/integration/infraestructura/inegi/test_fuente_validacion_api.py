@@ -495,7 +495,7 @@ class TestSmokeApiReal:
             pytest.skip("INEGI_TOKEN no configurado")
         monkeypatch.setenv("INEGI_TOKEN", token)
 
-        df = consultas.consultar_indice("produccion total")
+        df = consultas.consultar_indice("11")
 
         assert not df.empty
-        assert "INPP sin Petróleo y con Servicios" in df.columns
+        assert list(df.columns) == ["11"]
